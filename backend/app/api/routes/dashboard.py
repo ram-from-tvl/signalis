@@ -39,8 +39,16 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         select(func.count(OutreachPlan.id)).where(OutreachPlan.status == "pending_approval")
     ).scalar_one()
 
+    # Excludes lead_id IS NULL runs (currently just the pipeline-wide
+    # Prioritization/Ranking agent) — that agent reasons about the whole
+    # pipeline in one call, not one lead, so mixing its latency into the
+    # per-lead average would skew "agent seconds per lead" below.
     completed_runs = db.execute(
-        select(AgentRun).where(AgentRun.status == "completed", AgentRun.completed_at.is_not(None))
+        select(AgentRun).where(
+            AgentRun.status == "completed",
+            AgentRun.completed_at.is_not(None),
+            AgentRun.lead_id.is_not(None),
+        )
     ).scalars().all()
     if completed_runs:
         latencies = [
