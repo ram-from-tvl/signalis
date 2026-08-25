@@ -25,6 +25,11 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash"
+    hf_token: str = ""
+    hf_model: str = "Qwen/Qwen3-4B-Instruct-2507:nscale"
+    daytona_api_key: str = ""
+    daytona_api_url: str = "https://app.daytona.io/api"
+    daytona_sandbox_id: str = ""
     database_url: str = f"sqlite:///{BACKEND_DIR / 'signalis.db'}"
 
     # Below this confidence, a stage classification requires human approval
