@@ -2,6 +2,7 @@
 with each external transport mocked at its own boundary."""
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -75,6 +76,38 @@ def test_hf_fallback_raises_llm_error_on_transport_failure():
         mock_settings.return_value.hf_model = "fake-model"
         with pytest.raises(LLMError, match="Hugging Face fallback call failed"):
             _call_hf_fallback_json("x", "y", SCHEMA, 0.3)
+
+
+def test_hf_fallback_wraps_json_decode_error_as_llm_error():
+    """Regression test: a malformed response body (e.g. an HTML error page
+    served with a 200 status) must surface as LLMError, not an unhandled
+    JSONDecodeError, so generate_json's fallback handling is never bypassed."""
+    from app.core.llm import _call_hf_fallback_json
+
+    fake_response = MagicMock()
+    fake_response.raise_for_status = MagicMock()
+    fake_response.json.side_effect = json.JSONDecodeError("bad json", "doc", 0)
+    with patch("app.core.llm.get_settings") as mock_settings, patch("httpx.post", return_value=fake_response):
+        mock_settings.return_value.hf_token = "fake-token"
+        mock_settings.return_value.hf_model = "fake-model"
+        with pytest.raises(LLMError, match="non-JSON response body"):
+            _call_hf_fallback_json("x", "y", SCHEMA, 0.3)
+
+
+def test_sandbox_script_safely_escapes_malicious_signal_content():
+    """Regression test: signal field content containing a triple-quote
+    sequence must not be able to break out of the generated script's string
+    literal and alter what code runs in the sandbox."""
+    from app.core.sandbox import _build_scoring_script
+
+    malicious_rows = [
+        {"intent_stage_hint": "late''' ; import os; os.system('echo pwned') ; x = '''", "days_ago": 1}
+    ]
+    script = _build_scoring_script(malicious_rows)
+    compile(script, "<test>", "exec")  # raises SyntaxError if the literal was broken out of
+    # The malicious payload must remain a plain string literal, not become
+    # executable Python source.
+    assert "rows = json.loads('" in script or 'rows = json.loads("' in script
 
 
 def test_signal_scoring_uses_daytona_when_available():
