@@ -165,9 +165,11 @@ class RankedLeadEntry(BaseModel):
     lead_id: str
     rank: int
     reasoning: str
-    lead: LeadOut | None = None
-    stage: str | None = None
-    confidence: float | None = None
+    name: str
+    company: str
+    title: str
+    stage: str
+    confidence: float
 
 
 class PipelineRankingOut(BaseModel):

@@ -181,6 +181,11 @@ class PipelineRanking(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
     agent_run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
     ranked_leads: Mapped[list] = mapped_column(JSON, default=list)
-    # Each entry: {"lead_id": str, "rank": int, "reasoning": str}
+    # Each entry is a self-contained snapshot, not a pointer to live rows:
+    # {"lead_id": str, "rank": int, "reasoning": str, "name": str, "company": str,
+    #  "title": str, "stage": str, "confidence": float}
+    # Baking the stage/confidence/name in at write time means a snapshot never
+    # drifts if the lead is later reclassified, and reading it back needs no
+    # per-entry Lead/StageClassification lookups.
     summary: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_now)
