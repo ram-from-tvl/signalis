@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.agents.common import finish_run, start_run
 from app.core.config import get_settings
 from app.core.llm import LLMError, generate_json
+from app.core.sandbox import run_signal_scoring
 from app.models.entities import Lead, Signal
 
 SYSTEM_INSTRUCTION = """You are the Buying Stage Orchestrator Agent inside a B2B sales
@@ -67,11 +68,21 @@ def run_buying_stage(
         for s in considered
     )
 
+    signal_rows = [
+        {"intent_stage_hint": s.intent_stage_hint, "days_ago": _days_ago(s.occurred_at)}
+        for s in considered
+    ]
+    score, execution_path = run_signal_scoring(signal_rows)
+
     prompt = (
         f"Lead: {lead.name} at {lead.company} ({lead.title or 'title unknown'}).\n"
         f"Persona fit assessment: {persona_fit.get('fit', 'unknown')} — "
         f"{persona_fit.get('reasoning', 'no reasoning available')}\n\n"
         f"Signals within the last {window_days} days (or all available history if fewer):\n{rows}\n\n"
+        f"A recency- and strength-weighted signal score has been computed: "
+        f"{score['weighted_score']} (higher means stronger, more recent intent; "
+        f"roughly 1.0=early, 1.6=mid, 3.0=late scale). Use it as supporting evidence, "
+        f"not as the sole determinant.\n\n"
         "Assign the overall buying stage, confidence, and justification."
     )
 
@@ -97,5 +108,7 @@ def run_buying_stage(
         raise
 
     result["confidence"] = max(0.0, min(1.0, float(result.get("confidence", 0.0))))
+    result["signal_score"] = score["weighted_score"]
+    result["signal_score_computed_via"] = execution_path
     finish_run(db, run, output=result, reasoning=result.get("justification", ""))
     return result
