@@ -7,8 +7,10 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
+from app.agents.common import run_agent_reasoning
 from app.core.llm import LLMError, generate_json
 from app.core.sandbox import run_signal_scoring
+from app.core.trueforge import TrueForgeError, ensure_agent
 
 SCHEMA = {
     "type": "object",
@@ -94,3 +96,67 @@ def test_signal_scoring_falls_back_to_local_when_sandbox_unavailable():
     assert path == "local"
     assert result["signal_count"] == 1
     assert result["weighted_score"] > 0
+
+
+def test_ensure_agent_treats_already_exists_conflict_as_success():
+    fake_response = MagicMock()
+    fake_response.status_code = 409
+    fake_response.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
+    with patch("httpx.post", return_value=fake_response):
+        ensure_agent("signalis-persona-fit", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+
+def test_ensure_agent_raises_on_genuine_error():
+    fake_response = MagicMock()
+    fake_response.status_code = 500
+    fake_response.text = '{"error":{"message":"internal error"}}'
+    fake_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "server error", request=MagicMock(), response=fake_response
+    )
+    with patch("httpx.post", return_value=fake_response):
+        with pytest.raises(TrueForgeError):
+            ensure_agent("some-agent", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+
+def test_run_agent_reasoning_uses_trueforge_when_available():
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent") as mock_ensure, \
+         patch("app.agents.common.run_turn", return_value={"stage": "late", "confidence": 0.9}) as mock_turn:
+        mock_settings.return_value.trueforge_enabled = True
+        result = run_agent_reasoning(
+            trueforge_agent_name="signalis-buying-stage-orchestrator",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction="reason about stage",
+            prompt="lead data",
+            response_schema=SCHEMA,
+        )
+    assert result == {"stage": "late", "confidence": 0.9}
+    mock_ensure.assert_called_once()
+    mock_turn.assert_called_once()
+
+
+def test_run_agent_reasoning_falls_back_and_strips_tool_references_when_mcp_configured():
+    """Regression test: when TrueForge is unreachable, the direct fallback call
+    has no tool access, so any tool-referencing system instruction must be
+    neutralized — otherwise the model tries to invoke tools that don't exist
+    in that call and answers incoherently instead of following the schema."""
+    captured = {}
+
+    def fake_generate_json(*, system_instruction, prompt, response_schema, temperature):
+        captured["system_instruction"] = system_instruction
+        return {"fit": "full_fit", "reasoning": "matches", "missing_data": []}
+
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
+         patch("app.agents.common.generate_json", side_effect=fake_generate_json):
+        mock_settings.return_value.trueforge_enabled = True
+        result = run_agent_reasoning(
+            trueforge_agent_name="signalis-persona-fit",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction="Use the classify_company_industry tool to enrich the lead.",
+            prompt="lead data",
+            response_schema=SCHEMA,
+            mcp_servers=[{"name": "signalis-enrichment"}],
+        )
+    assert result == {"fit": "full_fit", "reasoning": "matches", "missing_data": []}
+    assert "No external tools are available" in captured["system_instruction"]
