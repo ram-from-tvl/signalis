@@ -82,11 +82,12 @@ lead — updating its understanding automatically whenever new signals arrive.
   codebase, not an installed black box), React Router, TanStack Query,
   Recharts, and Motion for a handful of purposeful transitions.
 
-See `docs/AGENT_GRAPH.md` for the full agent graph diagram and handoff
-description, `docs/DATA_SCHEMA.md` for the database schema, `docs/API.md`
-for the endpoint reference, `docs/DECISIONS.md` for design trade-offs and how
-ambiguity in the brief was resolved, and `docs/TIME_SAVINGS.md` for the
-manual-vs-agent time comparison.
+See `docs/ARCHITECTURE.md` for a system-level overview and request-flow
+walkthrough, `docs/AGENT_GRAPH.md` for the full agent graph diagram and
+handoff description, `docs/DATA_SCHEMA.md` for the database schema,
+`docs/API.md` for the endpoint reference, `docs/DECISIONS.md` for design
+trade-offs and how ambiguity in the brief was resolved, and
+`docs/TIME_SAVINGS.md` for the manual-vs-agent time comparison.
 
 ## Repository layout
 
@@ -113,8 +114,13 @@ frontend/
     components/    ui/ (shadcn-pattern primitives), layout/, leads/
     pages/         the six application screens
     types/         shared TypeScript types matching the backend schemas
-docs/              all required documentation deliverables
-.github/workflows/ CI: lint + test + build gate on every pull request
+docs/              architecture, agent graph, data schema, API reference,
+                   time-savings writeup
+.github/           CI workflow, PR template, issue templates
+CONTRIBUTING.md    development workflow and code review process
+CODE_OF_CONDUCT.md community standards
+SECURITY.md        vulnerability disclosure process
+CHANGELOG.md       notable changes, in Keep a Changelog format
 ```
 
 ## Setup from a clean checkout
@@ -286,3 +292,15 @@ pytest -m integration -q            # real end-to-end Gemini call (needs GEMINI_
 cd backend && ruff check app tests
 cd frontend && npx eslint .
 ```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, test
+and lint expectations, and how code review works in this repository. This
+project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). Security
+issues should be reported per [SECURITY.md](SECURITY.md) rather than as a
+public issue.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
