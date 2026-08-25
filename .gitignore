@@ -31,3 +31,6 @@ dist/
 # Editors
 .vscode/
 .idea/
+
+# Claude Code harness state
+.claude/
