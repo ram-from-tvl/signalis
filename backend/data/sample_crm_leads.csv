@@ -1,0 +1,21 @@
+name,company,title,company_size,industry,geography,email,deal_stage,last_activity,last_activity_date,notes
+Priya Ramanathan,Aravind Logistics,VP Operations,201-500,Logistics,India,priya.ramanathan@aravindlog.in,evaluation,demo_completed,2026-08-20,Attended live demo with two colleagues; asked about API rate limits.
+Marcus Chen,Beacon Robotics,Director of Engineering,51-200,Robotics,United States,mchen@beaconrobotics.com,evaluation,pricing_review,2026-08-22,Requested enterprise pricing sheet.
+Sofia Alvarez,Nortell Health Systems,Chief Marketing Officer,1000+,Healthcare,United States,sofia.alvarez@nortellhealth.com,discovery,content_download,2026-08-10,Downloaded ROI calculator whitepaper.
+Tobias Krueger,Kruger Manufacturing GmbH,Head of IT,501-1000,Manufacturing,Germany,t.krueger@krugermfg.de,,,2026-08-01,No CRM activity logged yet besides initial import.
+,Fenwick Retail Group,Ecommerce Director,201-500,Retail,United Kingdom,,,,,Row missing name field to exercise validation.
+Grace Okafor,Lumen Analytics,VP of Sales,51-200,Data & Analytics,Nigeria,grace.okafor@lumenanalytics.io,closed_won,contract_signed,2026-07-28,Signed after 3-week evaluation cycle.
+Daniel Whitfield,Cascade Financial Partners,SVP Technology,1000+,Financial Services,United States,dwhitfield@cascadefp.com,evaluation,demo_requested,2026-08-23,Booked demo for next week via website form.
+Haruto Sato,Meridian Steel Co,Plant Operations Manager,501-1000,Manufacturing,Japan,h.sato@meridiansteel.jp,discovery,email_reply,2026-08-15,Replied asking about integration with existing MES system.
+Elena Marchetti,Borsalino Fashion Group,Head of Digital,201-500,Retail,Italy,e.marchetti@borsalino-fashion.it,,not_applicable_row,invalid-date-value,Malformed last_activity_date to exercise date parsing fallback.
+Ryan O'Sullivan,Clearwater Insurance,VP Underwriting,501-1000,Insurance,Ireland,ryan.osullivan@clearwaterins.ie,evaluation,pricing_review,2026-08-24,Visited pricing page multiple times per website analytics.
+Anjali Deshmukh,Pinnacle EdTech,Chief Product Officer,51-200,Education Technology,India,anjali.deshmukh@pinnacleedtech.com,discovery,webinar_attended,2026-08-05,Attended "Future of B2B Sales" webinar.
+Lucas Bergström,Nordkap Energy AB,Director of Procurement,201-500,Energy,Sweden,l.bergstrom@nordkapenergy.se,discovery,,2026-08-18,Initial inbound inquiry via contact form.
+Chidi Okonkwo,Savanna Freight Solutions,COO,1000+,Logistics,Nigeria,chidi.okonkwo@savannafreight.com,evaluation,demo_completed,2026-08-19,Demo went well; asked for security/compliance documentation.
+Isabelle Fontaine,Cerulean Cosmetics,VP Marketing,201-500,Consumer Goods,France,isabelle.fontaine@ceruleancos.fr,discovery,content_download,2026-08-12,Downloaded case study on mid-market rollout.
+Wei Zhang,Jadeite Semiconductor,VP Engineering,1000+,Semiconductors,Singapore,wei.zhang@jadeitesemi.com,closed_lost,deal_lost,2026-06-30,Lost to competitor on price; kept for reference in dataset.
+Natalia Kowalski,Baltic Shipping Alliance,Head of Innovation,501-1000,Logistics,Poland,natalia.kowalski@balticshipping.pl,evaluation,demo_requested,2026-08-21,Requested demo focused on real-time tracking features.
+Samuel Ortiz,Roble Construction Group,VP of Technology,201-500,Construction,Mexico,samuel.ortiz@robleconstruction.mx,discovery,email_reply,2026-08-09,Asked clarifying question about implementation timeline.
+Fatima Al-Sayed,Desert Rose Hospitality,Director of Revenue,51-200,Hospitality,United Arab Emirates,fatima.alsayed@desertrosehg.ae,discovery,webinar_attended,2026-08-06,Attended webinar but has not engaged further since.
+Owen Whitaker,Timberline Outdoor Gear,Head of Growth,11-50,Consumer Goods,United States,owen.whitaker@timberlinegear.com,,unsubscribed,2026-07-15,Unsubscribed from marketing emails; low-intent lead retained for realism.
+Meera Krishnan,Vertex Biotech Labs,VP Research Operations,201-500,Biotechnology,India,meera.krishnan@vertexbiotech.in,evaluation,pricing_review,2026-08-24,Reviewed pricing page twice in the last two days.
