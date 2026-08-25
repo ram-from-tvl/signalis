@@ -1,28 +1,38 @@
 # Agent Graph
 
-Signalis runs five agents as nodes in a LangGraph `StateGraph`. Each node
-makes a real call to Gemini with a structured JSON response schema, persists
-its output as an `agent_runs` row, and hands its structured output forward to
-the next node via shared graph state. The orchestrator is the graph itself,
-not a single agent giving orders in prose: routing is expressed as real
-conditional edges evaluated on structured state, not as free-text
-instructions one agent gives another.
+Signalis runs five agents as nodes in a LangGraph `StateGraph`, but each
+node's actual reasoning executes as a session/turn on a local TrueForge
+agent harness process rather than a bare model API call. TrueForge owns the
+real agent loop for that step — model calls, MCP tool discovery/execution,
+context management — and the Python graph node only starts the turn and
+reads back its structured output (`app/core/trueforge.py`). LangGraph
+remains the Python-side coordinator: it is what decides node order and
+evaluates the one real conditional edge (the confidence-threshold branch),
+while TrueForge is what each individual node actually runs on.
 
 ```mermaid
 flowchart TD
-    Start([Pipeline triggered for a lead]) --> SE[Signal Extraction Agent]
-    SE --> PF[Persona Fit Agent]
-    PF --> BS[Buying Stage Orchestrator Agent]
+    Start([Pipeline triggered for a lead]) --> SE["Signal Extraction Agent\n(TrueForge session)"]
+    SE --> PF["Persona Fit Agent\n(TrueForge session + MCP tools)"]
+    PF -->|"MCP tool calls"| MCP[["signalis-enrichment MCP server\nclassify_company_industry\nestimate_company_size_band"]]
+    MCP --> PF
+    PF --> BS["Buying Stage Orchestrator Agent\n(TrueForge session)"]
+    BS -->|"scoring computation"| SB[["Daytona sandbox\nrecency/strength-weighted score"]]
+    SB --> BS
     BS --> Decision{confidence below threshold?}
-    Decision -->|yes, low confidence| OP[Outreach Planner Agent]
+    Decision -->|yes, low confidence| OP["Outreach Planner Agent\n(TrueForge session)"]
     Decision -->|no, high confidence| OP
-    OP --> EX[Explainability Agent]
+    OP --> EX["Explainability Agent\n(TrueForge session)"]
     EX --> Persist[(Persist stage_classification + outreach_plan\nboth start pending_approval)]
     Persist --> Human{Marketer reviews in UI}
     Human -->|approve| Approved[Classification / Plan marked approved]
     Human -->|reject| Rejected[Classification / Plan marked rejected]
     Human -->|edit touchpoints, then approve| Approved
 ```
+
+Every "TrueForge session" box falls back to a direct Gemini call, and then
+to a Hugging Face model, if TrueForge is not running or a turn fails — see
+`docs/DECISIONS.md` for the fallback chain and why it exists.
 
 ## Node responsibilities and handoffs
 
@@ -33,19 +43,31 @@ flowchart TD
    the `signals` rows in place and is handed forward as a summary.
 
 2. **Persona Fit Agent** receives the lead's firmographic profile plus the
-   currently active persona and solution ICP. It returns a fit
-   classification (`full_fit` / `partial_fit` / `mismatch`), reasoning, and
-   any missing data it had to work around. This result is handed to both
-   the Buying Stage Orchestrator (fit context informs how much weight to
-   give ambiguous signals) and later to the Outreach Planner (fit context
-   shapes message tone).
+   currently active persona and solution ICP, and has the
+   `signalis-enrichment` MCP server attached. When the lead's industry or
+   company size is missing or worth verifying, it genuinely calls the
+   `classify_company_industry` and/or `estimate_company_size_band` MCP tools
+   before answering — this is TrueForge discovering and invoking a real
+   remote tool over MCP, not a Python function call embedded in the agent's
+   own code. It returns a fit classification (`full_fit` / `partial_fit` /
+   `mismatch`), reasoning, and any missing data it had to work around. This
+   result is handed to both the Buying Stage Orchestrator (fit context
+   informs how much weight to give ambiguous signals) and later to the
+   Outreach Planner (fit context shapes message tone).
 
 3. **Buying Stage Orchestrator Agent** receives the lead's full signal
    history (all `signals`, not just the newly extracted ones, within the
-   configured rolling window) plus the persona fit result. It returns the
-   overall `stage`, a `confidence` score, and a `justification`. This is the
-   node whose confidence score drives the graph's one real conditional
-   branch.
+   configured rolling window) plus the persona fit result. Before calling
+   the model, the graph node computes a recency/strength-weighted signal
+   score by executing generated Python inside a Daytona sandbox
+   (`app/core/sandbox.py`) — falling back to an equivalent local computation
+   if the sandbox is briefly unreachable — and passes that score to the
+   agent as supporting evidence. The agent then returns the overall `stage`,
+   a `confidence` score, and a `justification`. This is the node whose
+   confidence score drives the graph's one real conditional branch; its
+   persisted output also records `signal_score_computed_via` (`"daytona"` or
+   `"local"`) so which execution path actually ran is independently
+   verifiable after the fact.
 
 4. **Conditional edge**: if confidence is below
    `confidence_approval_threshold` (default 0.5, configurable), the
@@ -68,6 +90,28 @@ flowchart TD
    language. This narrative is what the UI's agent trace view foregrounds
    for a fast, non-technical read of "why did the system land here."
 
+## Runtime architecture: LangGraph coordinates, TrueForge executes
+
+Each node function in `app/agents/graph.py` calls its corresponding agent
+module (`app/agents/signal_extraction.py`, etc.), which in turn calls
+`app.agents.common.run_agent_reasoning`. That function is the actual
+TrueForge integration point: it registers a named TrueForge agent (once,
+idempotently) with the node's system instruction and model, starts a
+session, runs one turn with the node's prompt, and polls until the turn
+completes or errors. The registered instruction always embeds the node's
+JSON response schema directly, so TrueForge's model call — whichever
+provider it is actually routed to — returns exactly the structured shape the
+rest of the pipeline expects.
+
+If TrueForge is disabled (`TRUEFORGE_ENABLED=false`) or unreachable, the same
+call falls back to a direct Gemini call and then a Hugging Face call
+(`app/core/llm.py`), using the identical prompt and schema — this is a
+transport fallback, not a second reasoning path. Because the direct fallback
+has no MCP tool access, any tool-referencing instruction (Persona Fit's) is
+rewritten for that path specifically to tell the model no tools are
+available, rather than leaving it to try invoking tools that do not exist
+in that call.
+
 ## Human-approval checkpoint
 
 Every outreach plan produced by the graph starts in `pending_approval`
@@ -78,6 +122,17 @@ classification (confidence below the threshold) is flagged
 the classification itself before deciding whether the plan built on top of
 it makes sense. Both approval paths write an immutable `approval_events`
 row.
+
+Separately from this application-level checkpoint, TrueForge itself provides
+a native per-tool human-approval primitive: an MCP server attached to an
+agent can set `require_approval_for_tools`, and any matching tool call then
+pauses the turn with `state.status == "done"` and
+`required_actions: [{"type": "tool.approval_required", ...}]` until a
+`user.tool_approval` turn input resumes it. This build does not gate the
+enrichment tool behind it — see `docs/DECISIONS.md` for why — but the
+primitive was exercised directly against the running harness to confirm it
+genuinely pauses and resumes a turn, not just that the field exists in the
+API schema.
 
 ## Re-running the graph
 
