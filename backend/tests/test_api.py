@@ -147,3 +147,42 @@ def test_dashboard_stats_with_no_data(client):
     body = response.json()
     assert body["total_leads"] == 0
     assert body["average_confidence"] == 0.0
+
+
+def test_dashboard_latency_excludes_pipeline_wide_agent_runs(client, db_session):
+    """Regression test for the Qodo finding: the Prioritization/Ranking
+    agent's AgentRun (lead_id=None, reasoning over the whole pipeline) must
+    not be averaged into the per-lead agent latency the dashboard reports,
+    since it isn't a per-lead call and would skew the number."""
+    import datetime
+
+    from app.models.entities import AgentRun
+
+    fast_start = datetime.datetime(2026, 1, 1, 0, 0, 0)
+    fast_end = fast_start + datetime.timedelta(seconds=2)
+    slow_start = datetime.datetime(2026, 1, 1, 0, 0, 0)
+    slow_end = slow_start + datetime.timedelta(seconds=200)
+
+    db_session.add(
+        AgentRun(
+            lead_id=None,
+            agent_name="prioritization",
+            status="completed",
+            started_at=slow_start,
+            completed_at=slow_end,
+        )
+    )
+    db_session.add(
+        AgentRun(
+            lead_id="some-lead-id",
+            agent_name="signal_extraction",
+            status="completed",
+            started_at=fast_start,
+            completed_at=fast_end,
+        )
+    )
+    db_session.commit()
+
+    response = client.get("/api/dashboard/stats")
+    body = response.json()
+    assert body["average_agent_latency_seconds"] == 2.0
