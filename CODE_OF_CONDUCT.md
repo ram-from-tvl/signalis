@@ -52,9 +52,15 @@ public spaces.
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the maintainers listed in [CONTRIBUTING.md](CONTRIBUTING.md).
-All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior can be
+reported privately through GitHub's
+[private vulnerability reporting](../../security/advisories/new) for this
+repository (the same channel used for security reports — see
+[SECURITY.md](SECURITY.md)), or by contacting a repository maintainer
+directly. This project does not yet have a dedicated conduct-reporting
+address separate from that channel; if one is added, it will be linked here
+and in [CONTRIBUTING.md](CONTRIBUTING.md). All complaints will be reviewed
+and investigated promptly and fairly.
 
 All maintainers are obligated to respect the privacy and security of the
 reporter of any incident.

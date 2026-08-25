@@ -101,9 +101,13 @@ in the degraded path. This matters for the product's core claim
 
 ## Why classifications and plans are append-only
 
-A stage classification or outreach plan is never updated in place. A new
-pipeline run creates a new row and sets `superseded_by_id` (or an
-equivalent status transition) on the old one. This means:
+The *content* of a stage classification or outreach plan is never updated
+in place — a new pipeline run always inserts a new row rather than
+rewriting an existing one's stage, confidence, justification, or
+touchpoints. The only mutation applied to a prior row is a supersession
+marker: the old classification's `superseded_by_id` is set to the new
+row's id, and the old plan's `status` is set to `"superseded"`
+(`app/services/pipeline.py`). This means:
 
 - The full reasoning history behind a lead's current state is always
   reconstructable, not just the latest snapshot.

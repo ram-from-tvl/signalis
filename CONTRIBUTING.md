@@ -21,7 +21,8 @@ backend, frontend). The short version once your `.env` is in place:
 # Backend
 cd backend
 python -m venv venv && source venv/bin/activate
-pip install -e ".[dev]"
+pip install fastapi "uvicorn[standard]" sqlalchemy pydantic pydantic-settings \
+  python-dotenv python-multipart langgraph google-genai daytona mcp pytest httpx ruff
 uvicorn app.main:app --reload
 
 # Frontend, in a second terminal
@@ -44,8 +45,8 @@ npm run dev
 5. Run the full local check before opening a pull request:
 
    ```bash
-   cd backend && ruff check app tests && pytest -m "not integration" -q
-   cd frontend && npx eslint . && npx tsc --noEmit
+   (cd backend && ruff check app tests && pytest -m "not integration" -q)
+   (cd frontend && npx eslint . && npx tsc --noEmit)
    ```
 
 6. Push your branch and open a pull request against `main`.
@@ -67,8 +68,8 @@ unmodified in assertions.
 ## Linting
 
 ```bash
-cd backend && ruff check app tests
-cd frontend && npx eslint . && npx tsc --noEmit
+(cd backend && ruff check app tests)
+(cd frontend && npx eslint . && npx tsc --noEmit)
 ```
 
 Both are enforced in CI (`.github/workflows/code-review.yml`) and will block
@@ -86,8 +87,12 @@ when the reasoning isn't obvious from the diff alone.
 
 Every pull request runs through automated review before merge:
 
-- **CI** (`.github/workflows/code-review.yml`) runs lint and the test suite
-  on both backend and frontend, and blocks merge on failure.
+- **CI** (`.github/workflows/code-review.yml`) runs backend lint (`ruff`)
+  and the backend test suite, and runs frontend lint (`eslint`, up to 20
+  warnings tolerated before failing) and a production build. There is no
+  frontend test suite yet — a frontend behavior change is verified by the
+  tests described in [Testing](#testing) plus manual verification, not CI.
+  Any of these steps failing blocks merge.
 - **Qodo Merge** reviews every pull request automatically on open and on
   each new commit, posting both a structured description and inline
   findings. Address real findings with an actual code fix (not just a

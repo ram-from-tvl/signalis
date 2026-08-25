@@ -16,9 +16,9 @@
      screens checked. "Tests pass" alone is not enough for a UI or
      behavior change; describe what was actually exercised. -->
 
-- [ ] `pytest -m "not integration" -q` passes (backend changes)
-- [ ] `ruff check app tests` clean (backend changes)
-- [ ] `npx eslint .` and `npx tsc --noEmit` clean (frontend changes)
+- [ ] `(cd backend && pytest -m "not integration" -q)` passes (backend changes)
+- [ ] `(cd backend && ruff check app tests)` clean (backend changes)
+- [ ] `(cd frontend && npx eslint . && npx tsc --noEmit)` clean (frontend changes)
 - [ ] Manually verified in a running app (describe below), for any
       user-visible change
 
