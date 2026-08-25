@@ -1,0 +1,66 @@
+[
+  {"lead_email": "priya.ramanathan@aravindlog.in", "name": "Priya Ramanathan", "company": "Aravind Logistics", "page": "/product/overview", "event_type": "page_view", "timestamp": "2026-07-29T09:12:00"},
+  {"lead_email": "priya.ramanathan@aravindlog.in", "name": "Priya Ramanathan", "company": "Aravind Logistics", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-08-14T15:40:00"},
+  {"lead_email": "priya.ramanathan@aravindlog.in", "name": "Priya Ramanathan", "company": "Aravind Logistics", "page": "/demo-request", "event_type": "demo_request", "timestamp": "2026-08-19T11:05:00"},
+  {"lead_email": "priya.ramanathan@aravindlog.in", "name": "Priya Ramanathan", "company": "Aravind Logistics", "page": "/demo", "event_type": "demo_attended", "timestamp": "2026-08-20T16:00:00"},
+
+  {"lead_email": "mchen@beaconrobotics.com", "name": "Marcus Chen", "company": "Beacon Robotics", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-08-05T10:00:00"},
+  {"lead_email": "mchen@beaconrobotics.com", "name": "Marcus Chen", "company": "Beacon Robotics", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-08-16T10:22:00"},
+  {"lead_email": "mchen@beaconrobotics.com", "name": "Marcus Chen", "company": "Beacon Robotics", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-08-22T09:03:00"},
+  {"lead_email": "mchen@beaconrobotics.com", "name": "Marcus Chen", "company": "Beacon Robotics", "page": "/security-whitepaper", "event_type": "content_download", "timestamp": "2026-08-21T13:45:00"},
+
+  {"lead_email": "sofia.alvarez@nortellhealth.com", "name": "Sofia Alvarez", "company": "Nortell Health Systems", "page": "/blog/healthcare-marketing-trends", "event_type": "blog_visit", "timestamp": "2026-07-25T08:30:00"},
+  {"lead_email": "sofia.alvarez@nortellhealth.com", "name": "Sofia Alvarez", "company": "Nortell Health Systems", "page": "/resources/roi-calculator", "event_type": "content_download", "timestamp": "2026-08-10T14:12:00"},
+  {"lead_email": "sofia.alvarez@nortellhealth.com", "name": "Sofia Alvarez", "company": "Nortell Health Systems", "page": "/", "event_type": "homepage_visit", "timestamp": "2026-08-11T09:00:00"},
+
+  {"lead_email": "t.krueger@krugermfg.de", "name": "Tobias Krueger", "company": "Kruger Manufacturing GmbH", "page": "/", "event_type": "homepage_visit", "timestamp": "2026-08-01T07:15:00"},
+
+  {"lead_email": null, "name": "", "company": "Fenwick Retail Group", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-08-19T12:00:00"},
+
+  {"lead_email": "grace.okafor@lumenanalytics.io", "name": "Grace Okafor", "company": "Lumen Analytics", "page": "/case-studies/data-analytics", "event_type": "case_study_view", "timestamp": "2026-07-10T11:00:00"},
+  {"lead_email": "grace.okafor@lumenanalytics.io", "name": "Grace Okafor", "company": "Lumen Analytics", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-07-15T13:30:00"},
+  {"lead_email": "grace.okafor@lumenanalytics.io", "name": "Grace Okafor", "company": "Lumen Analytics", "page": "/signup", "event_type": "free_trial_signup", "timestamp": "2026-07-20T10:00:00"},
+
+  {"lead_email": "dwhitfield@cascadefp.com", "name": "Daniel Whitfield", "company": "Cascade Financial Partners", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-08-20T08:45:00"},
+  {"lead_email": "dwhitfield@cascadefp.com", "name": "Daniel Whitfield", "company": "Cascade Financial Partners", "page": "/demo-request", "event_type": "demo_request", "timestamp": "2026-08-23T09:30:00"},
+  {"lead_email": "dwhitfield@cascadefp.com", "name": "Daniel Whitfield", "company": "Cascade Financial Partners", "page": "/contact", "event_type": "contact_form_submit", "timestamp": "2026-08-23T09:35:00"},
+
+  {"lead_email": "h.sato@meridiansteel.jp", "name": "Haruto Sato", "company": "Meridian Steel Co", "page": "/integrations/mes", "event_type": "feature_page_visit", "timestamp": "2026-08-14T05:20:00"},
+  {"lead_email": "h.sato@meridiansteel.jp", "name": "Haruto Sato", "company": "Meridian Steel Co", "page": "/blog/manufacturing-integration", "event_type": "blog_visit", "timestamp": "2026-08-15T06:00:00"},
+
+  {"lead_email": "e.marchetti@borsalino-fashion.it", "name": "Elena Marchetti", "company": "Borsalino Fashion Group", "page": "/", "event_type": "homepage_visit", "timestamp": "not-a-timestamp"},
+  {"lead_email": "e.marchetti@borsalino-fashion.it", "name": "Elena Marchetti", "company": "Borsalino Fashion Group", "page": "/product/overview", "event_type": "page_view", "timestamp": "2026-08-03T09:00:00"},
+
+  {"lead_email": "ryan.osullivan@clearwaterins.ie", "name": "Ryan O'Sullivan", "company": "Clearwater Insurance", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-08-18T10:00:00"},
+  {"lead_email": "ryan.osullivan@clearwaterins.ie", "name": "Ryan O'Sullivan", "company": "Clearwater Insurance", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-08-22T11:15:00"},
+  {"lead_email": "ryan.osullivan@clearwaterins.ie", "name": "Ryan O'Sullivan", "company": "Clearwater Insurance", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-08-24T14:00:00"},
+
+  {"lead_email": "anjali.deshmukh@pinnacleedtech.com", "name": "Anjali Deshmukh", "company": "Pinnacle EdTech", "page": "/webinars/future-of-b2b-sales", "event_type": "webinar_attended", "timestamp": "2026-08-05T17:00:00"},
+  {"lead_email": "anjali.deshmukh@pinnacleedtech.com", "name": "Anjali Deshmukh", "company": "Pinnacle EdTech", "page": "/blog/edtech-buying-signals", "event_type": "blog_visit", "timestamp": "2026-08-07T09:00:00"},
+
+  {"lead_email": "l.bergstrom@nordkapenergy.se", "name": "Lucas Bergstrom", "company": "Nordkap Energy AB", "page": "/contact", "event_type": "contact_form_submit", "timestamp": "2026-08-18T13:00:00"},
+
+  {"lead_email": "chidi.okonkwo@savannafreight.com", "name": "Chidi Okonkwo", "company": "Savanna Freight Solutions", "page": "/demo-request", "event_type": "demo_request", "timestamp": "2026-08-17T08:00:00"},
+  {"lead_email": "chidi.okonkwo@savannafreight.com", "name": "Chidi Okonkwo", "company": "Savanna Freight Solutions", "page": "/demo", "event_type": "demo_attended", "timestamp": "2026-08-19T15:00:00"},
+  {"lead_email": "chidi.okonkwo@savannafreight.com", "name": "Chidi Okonkwo", "company": "Savanna Freight Solutions", "page": "/security-whitepaper", "event_type": "content_download", "timestamp": "2026-08-20T09:00:00"},
+
+  {"lead_email": "isabelle.fontaine@ceruleancos.fr", "name": "Isabelle Fontaine", "company": "Cerulean Cosmetics", "page": "/case-studies/midmarket-rollout", "event_type": "case_study_view", "timestamp": "2026-08-12T10:00:00"},
+  {"lead_email": "isabelle.fontaine@ceruleancos.fr", "name": "Isabelle Fontaine", "company": "Cerulean Cosmetics", "page": "/product/overview", "event_type": "page_view", "timestamp": "2026-08-13T11:00:00"},
+
+  {"lead_email": "wei.zhang@jadeitesemi.com", "name": "Wei Zhang", "company": "Jadeite Semiconductor", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-06-25T10:00:00"},
+  {"lead_email": "wei.zhang@jadeitesemi.com", "name": "Wei Zhang", "company": "Jadeite Semiconductor", "page": "/", "event_type": "homepage_visit", "timestamp": "2026-06-10T09:00:00"},
+
+  {"lead_email": "natalia.kowalski@balticshipping.pl", "name": "Natalia Kowalski", "company": "Baltic Shipping Alliance", "page": "/demo-request", "event_type": "demo_request", "timestamp": "2026-08-21T07:30:00"},
+  {"lead_email": "natalia.kowalski@balticshipping.pl", "name": "Natalia Kowalski", "company": "Baltic Shipping Alliance", "page": "/features/real-time-tracking", "event_type": "feature_page_visit", "timestamp": "2026-08-20T07:00:00"},
+
+  {"lead_email": "samuel.ortiz@robleconstruction.mx", "name": "Samuel Ortiz", "company": "Roble Construction Group", "page": "/blog/construction-tech-adoption", "event_type": "blog_visit", "timestamp": "2026-08-08T10:00:00"},
+  {"lead_email": "samuel.ortiz@robleconstruction.mx", "name": "Samuel Ortiz", "company": "Roble Construction Group", "page": "/product/overview", "event_type": "page_view", "timestamp": "2026-08-09T09:30:00"},
+
+  {"lead_email": "fatima.alsayed@desertrosehg.ae", "name": "Fatima Al-Sayed", "company": "Desert Rose Hospitality", "page": "/webinars/future-of-b2b-sales", "event_type": "webinar_attended", "timestamp": "2026-08-06T16:00:00"},
+
+  {"lead_email": "owen.whitaker@timberlinegear.com", "name": "Owen Whitaker", "company": "Timberline Outdoor Gear", "page": "/", "event_type": "homepage_visit", "timestamp": "2026-07-14T08:00:00"},
+
+  {"lead_email": "meera.krishnan@vertexbiotech.in", "name": "Meera Krishnan", "company": "Vertex Biotech Labs", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-08-23T10:00:00"},
+  {"lead_email": "meera.krishnan@vertexbiotech.in", "name": "Meera Krishnan", "company": "Vertex Biotech Labs", "page": "/pricing", "event_type": "pricing_page_visit", "timestamp": "2026-08-24T16:30:00"},
+  {"lead_email": "meera.krishnan@vertexbiotech.in", "name": "Meera Krishnan", "company": "Vertex Biotech Labs", "page": "/demo-request", "event_type": "demo_request", "timestamp": "2026-08-24T16:45:00"}
+]
