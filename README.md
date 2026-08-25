@@ -180,8 +180,7 @@ Leave it running in its own terminal.
 cd backend
 python3 -m venv venv
 source venv/bin/activate
-pip install fastapi "uvicorn[standard]" sqlalchemy pydantic pydantic-settings \
-  python-dotenv python-multipart langgraph google-genai daytona mcp pytest httpx ruff
+pip install -e ".[dev]"   # installs the app plus pytest + ruff, from pyproject.toml
 python -m app.core.trueforge_bootstrap   # registers model/sandbox/MCP providers with TrueForge
 uvicorn app.main:app --reload
 ```
