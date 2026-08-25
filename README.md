@@ -95,14 +95,15 @@ backend/
   app/
     agents/        six agent modules (five-agent LangGraph pipeline plus the
                    standalone Prioritization/Ranking agent)
-    api/routes/    FastAPI routers
+    api/routes/    FastAPI routers, one module per resource
+    api/router.py  aggregates every router; app.main only mounts this one
     core/          config, the TrueForge HTTP client, the Gemini/HF LLM
                    fallback, the Daytona sandbox wrapper, and the one-time
-                   TrueForge provider bootstrap script
+                   TrueForge provider bootstrap script (trueforge_bootstrap.py)
     mcp_tools/     the remote MCP server exposing enrichment tools
     db/            SQLAlchemy session/base + demo data seeding
-    models/        SQLAlchemy ORM models
-    schemas/       Pydantic request/response schemas
+    models/        SQLAlchemy ORM models, one module per domain entity
+    schemas/       Pydantic request/response schemas, one module per domain
     services/      ingestion + pipeline orchestration services
   data/            bundled sample CRM CSV and website events JSON
   tests/           pytest suite (unit, API, one real-Gemini integration test)
@@ -181,7 +182,7 @@ python3 -m venv venv
 source venv/bin/activate
 pip install fastapi "uvicorn[standard]" sqlalchemy pydantic pydantic-settings \
   python-dotenv python-multipart langgraph google-genai daytona mcp pytest httpx ruff
-python -m app.core.trueforge_setup   # registers model/sandbox/MCP providers with TrueForge
+python -m app.core.trueforge_bootstrap   # registers model/sandbox/MCP providers with TrueForge
 uvicorn app.main:app --reload
 ```
 

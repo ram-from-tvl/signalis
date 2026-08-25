@@ -1,7 +1,9 @@
 {
-  "name": "frontend",
+  "name": "signalis-frontend",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "React + TypeScript client for Signalis, an agentic buying-signal copilot.",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

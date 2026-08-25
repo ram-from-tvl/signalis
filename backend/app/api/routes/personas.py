@@ -5,8 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.entities import Persona
-from app.schemas.schemas import PersonaCreate, PersonaOut
+from app.models import Persona
+from app.schemas import PersonaCreate, PersonaOut
 
 router = APIRouter(prefix="/api/personas", tags=["personas"])
 

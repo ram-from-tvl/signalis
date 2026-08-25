@@ -23,8 +23,7 @@ jobs:
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install fastapi "uvicorn[standard]" sqlalchemy pydantic pydantic-settings \
-            python-dotenv python-multipart langgraph google-genai daytona mcp pytest httpx ruff
+          pip install -e ".[dev]"
 
       - name: Run ruff lint
         run: ruff check app tests

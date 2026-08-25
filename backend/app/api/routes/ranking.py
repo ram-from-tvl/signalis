@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.entities import PipelineRanking
-from app.schemas.schemas import PipelineRankingOut, RankedLeadEntry
+from app.models import PipelineRanking
+from app.schemas import PipelineRankingOut, RankedLeadEntry
 from app.services.ranking import latest_pipeline_ranking, run_pipeline_ranking
 
 logger = logging.getLogger("signalis.api")
@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/ranking", tags=["ranking"])
 
 def _to_response(ranking: PipelineRanking) -> PipelineRankingOut:
     # Every field needed is already baked into ranked_leads at write time
-    # (see PipelineRanking in app.models.entities), so building this
+    # (see PipelineRanking in app.models.ranking), so building this
     # response needs zero additional database queries regardless of how
     # many leads were ranked. ranked_leads is stored as unvalidated JSON, so
     # a malformed row (e.g. from a manually edited DB) is skipped rather

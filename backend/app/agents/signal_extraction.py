@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.agents.common import finish_run, run_agent_reasoning, start_run
 from app.core.config import get_settings
 from app.core.llm import LLMError
-from app.models.entities import Lead, Signal
+from app.models import Lead, Signal
 
 SYSTEM_INSTRUCTION = """You are the Signal Extraction Agent inside a B2B sales intelligence system.
 You receive raw, sometimes messy interaction records for one lead (CRM fields and/or website

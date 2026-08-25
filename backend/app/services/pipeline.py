@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.graph import get_pipeline_graph
 from app.core.config import get_settings
-from app.models.entities import Lead, OutreachPlan, Persona, Signal, Solution, StageClassification
+from app.models import Lead, OutreachPlan, Persona, Signal, Solution, StageClassification
 
 
 def _latest_persona(db: Session) -> Persona | None:

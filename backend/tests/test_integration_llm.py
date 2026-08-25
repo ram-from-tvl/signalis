@@ -13,7 +13,7 @@ import pytest
 
 from app.agents.persona_fit import run_persona_fit
 from app.core.config import get_settings
-from app.models.entities import Persona, Solution
+from app.models import Persona, Solution
 
 settings = get_settings()
 

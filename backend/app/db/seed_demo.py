@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
-from app.models.entities import Persona, Solution
+from app.models import Persona, Solution
 from app.services.ingestion import ingest_crm_csv, ingest_website_events_json
 
 DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data"

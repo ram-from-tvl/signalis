@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.agents.common import finish_run, run_agent_reasoning, start_run
 from app.core.config import get_settings
 from app.core.llm import LLMError
-from app.models.entities import Lead, StageClassification
+from app.models import Lead, StageClassification
 
 logger = logging.getLogger("signalis.agents")
 

@@ -7,8 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.entities import Lead, OutreachPlan, Signal, StageClassification
-from app.schemas.schemas import (
+from app.models import Lead, OutreachPlan, Signal, StageClassification
+from app.schemas import (
     AgentRunOut,
     AppendSignalsRequest,
     IngestionReportOut,

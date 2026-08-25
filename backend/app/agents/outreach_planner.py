@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.agents.common import finish_run, run_agent_reasoning, start_run
 from app.core.config import get_settings
 from app.core.llm import LLMError
-from app.models.entities import Lead, Persona, Solution
+from app.models import Lead, Persona, Solution
 
 SYSTEM_INSTRUCTION = """You are the Outreach Planner Agent inside a B2B sales intelligence
 system. Given a lead's buying stage, confidence, persona fit, and the solution's value

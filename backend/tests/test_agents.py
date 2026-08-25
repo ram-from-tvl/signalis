@@ -12,7 +12,7 @@ from unittest.mock import patch
 from app.agents.buying_stage import run_buying_stage
 from app.agents.outreach_planner import run_outreach_planner
 from app.agents.persona_fit import run_persona_fit
-from app.models.entities import Persona, Solution
+from app.models import Persona, Solution
 
 
 def test_buying_stage_confidence_is_clamped_to_valid_range(db_session, sample_lead):

@@ -30,7 +30,7 @@ from app.agents.outreach_planner import run_outreach_planner
 from app.agents.persona_fit import run_persona_fit
 from app.agents.signal_extraction import run_signal_extraction
 from app.core.config import get_settings
-from app.models.entities import Lead, Persona, Signal, Solution
+from app.models import Lead, Persona, Signal, Solution
 
 
 class PipelineState(TypedDict, total=False):

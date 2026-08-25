@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from app.agents.prioritization import run_prioritization
-from app.models.entities import Lead, StageClassification
+from app.models import Lead, StageClassification
 
 
 def _lead_and_classification(db_session, *, name: str, stage: str, confidence: float) -> tuple[Lead, StageClassification]:

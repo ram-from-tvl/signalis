@@ -8,7 +8,7 @@ app.agents.common.run_agent_reasoning on first use, so this script only
 needs to run once after TrueForge starts (or whenever its local SQLite store
 is reset).
 
-Usage: python -m app.core.trueforge_setup
+Usage: python -m app.core.trueforge_bootstrap
 """
 from __future__ import annotations
 
