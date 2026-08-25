@@ -57,7 +57,11 @@ def run_signal_scoring(signal_rows: list[dict]) -> tuple[dict, str]:
 
 
 def _build_scoring_script(signal_rows: list[dict]) -> str:
-    payload = json.dumps(signal_rows)
+    # repr() of the JSON string produces a valid, properly escaped Python
+    # string literal regardless of what characters (quotes, backslashes,
+    # etc.) appear in the signal data, so untrusted signal content can never
+    # break out of the literal and alter the script that runs in the sandbox.
+    payload_literal = repr(json.dumps(signal_rows))
     return f"""
 import json
 
@@ -76,7 +80,7 @@ def score(rows):
         return {{"weighted_score": 0.0, "signal_count": len(rows)}}
     return {{"weighted_score": round(total / weight_sum, 4), "signal_count": len(rows)}}
 
-rows = json.loads('''{payload}''')
+rows = json.loads({payload_literal})
 print(json.dumps(score(rows)))
 """
 
