@@ -3,6 +3,7 @@ import { Link } from "react-router-dom"
 import { dashboardApi, rankingApi } from "@/api/endpoints"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Skeleton } from "@/components/ui/skeleton"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
 import { useToast } from "@/components/ui/toast-context"
@@ -19,9 +20,9 @@ import {
 import { Users, FileCheck, Gauge, Timer, ListOrdered } from "lucide-react"
 
 const STAGE_COLORS: Record<string, string> = {
-  early: "hsl(220 14% 55%)",
-  mid: "hsl(38 92% 50%)",
-  late: "hsl(152 55% 34%)",
+  early: "hsl(var(--stage-early))",
+  mid: "hsl(var(--stage-mid))",
+  late: "hsl(var(--stage-late))",
 }
 
 function StatTile({
@@ -75,7 +76,37 @@ export function DashboardPage() {
   })
 
   if (isLoading || !stats) {
-    return <p className="text-sm text-muted-foreground">Loading dashboard...</p>
+    return (
+      <div className="flex flex-col gap-6 pb-12" aria-busy="true" aria-live="polite">
+        <div>
+          <Skeleton className="h-7 w-40" />
+          <Skeleton className="h-4 w-72 mt-2" />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Card key={i}>
+              <CardContent className="py-5">
+                <Skeleton className="h-10 w-10 rounded-lg mb-3" />
+                <Skeleton className="h-3 w-20 mb-2" />
+                <Skeleton className="h-6 w-14" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <div className="grid gap-6 lg:grid-cols-2">
+          <Card>
+            <CardContent className="pt-6">
+              <Skeleton className="h-72 w-full" />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <Skeleton className="h-72 w-full" />
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    )
   }
 
   const stageData = Object.entries(stats.stage_distribution).map(([stage, count]) => ({
@@ -221,7 +252,13 @@ export function DashboardPage() {
           </Button>
         </CardHeader>
         <CardContent>
-          {rankingLoading && <p className="text-sm text-muted-foreground">Loading ranking...</p>}
+          {rankingLoading && (
+            <div className="flex flex-col gap-2" aria-busy="true" aria-live="polite">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          )}
           {!rankingLoading && !ranking && (
             <p className="text-sm text-muted-foreground">
               No ranking yet. Classify some leads, then click "Rank Pipeline" to see who to contact first.
