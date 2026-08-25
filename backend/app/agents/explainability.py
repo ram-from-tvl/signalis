@@ -11,8 +11,9 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.agents.common import finish_run, start_run
-from app.core.llm import LLMError, generate_json
+from app.agents.common import finish_run, run_agent_reasoning, start_run
+from app.core.config import get_settings
+from app.core.llm import LLMError
 from app.models.entities import Lead
 
 SYSTEM_INSTRUCTION = """You are the Explainability Agent inside a B2B sales intelligence system.
@@ -58,7 +59,9 @@ def run_explainability(
     }
 
     try:
-        result = generate_json(
+        result = run_agent_reasoning(
+            trueforge_agent_name="signalis-explainability",
+            model=get_settings().trueforge_model,
             system_instruction=SYSTEM_INSTRUCTION,
             prompt=prompt,
             response_schema=schema,
