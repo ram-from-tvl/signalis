@@ -31,22 +31,49 @@ lead — updating its understanding automatically whenever new signals arrive.
 ## Architecture
 
 - **Backend**: Python 3.11+, FastAPI, SQLAlchemy 2.x, SQLite, Pydantic v2.
-- **Agent orchestration**: LangGraph `StateGraph` wiring five agent nodes
-  with a real conditional edge on the buying-stage confidence score.
-- **LLM**: Google Gemini (`gemini-2.5-flash` by default, configurable via
-  `GEMINI_MODEL`) through the `google-genai` SDK, using structured JSON
-  response schemas for every agent call. No agent's reasoning is hardcoded
-  or templated — every classification, fit assessment, plan, and narrative
-  is a real model call over real data. If Gemini fails after retries, the
-  same call is retried once against a Hugging Face Inference Providers model
-  (`Qwen/Qwen3-4B-Instruct-2507` by default, configurable via `HF_MODEL`)
-  using OpenAI-compatible tool calling, so a transient outage on the primary
-  provider does not stop the pipeline.
+- **Agent runtime**: every agent's reasoning step runs as a session/turn on a
+  local TrueForge agent harness process rather than a bare model API call —
+  TrueForge owns the actual agent loop (model calls, MCP tool discovery and
+  execution, context management), and the backend only starts turns and
+  reads back their structured output over TrueForge's HTTP API
+  (`app/core/trueforge.py`). A LangGraph `StateGraph` still sits above this
+  as the Python-side coordinator (`app/agents/graph.py`), wiring the five
+  agent steps together with a real conditional edge on the buying-stage
+  confidence score; what changed is that each *node* in that graph now
+  delegates its reasoning to TrueForge instead of calling an LLM SDK
+  directly.
+- **MCP tools**: the Persona Fit agent calls a real remote MCP server
+  (`app/mcp_tools/enrichment_server.py`, served over HTTP) exposing firmographic
+  enrichment tools — `classify_company_industry` and
+  `estimate_company_size_band` — so a lead's company data is enriched via a
+  genuine tool call discovered and invoked through TrueForge's MCP layer,
+  not a function call embedded in the agent's own Python code.
 - **Sandboxed execution**: the buying-stage signal-strength score is computed
   by running generated Python inside a Daytona sandbox rather than as
   in-process business logic, with a local fallback computation if the
   sandbox is briefly unreachable. Which path actually ran is recorded on
   every buying-stage agent run.
+- **LLM providers**: Google Gemini (`gemini-2.5-flash` by default,
+  configurable via `GEMINI_MODEL`) is the primary model, registered with
+  TrueForge as a native `google-gemini` provider. If TrueForge itself is not
+  running, or a turn fails after retries, the same call falls back to a
+  direct Gemini call and then to a Hugging Face Inference Providers model
+  (`Qwen/Qwen3-4B-Instruct-2507` by default, configurable via `HF_MODEL`)
+  using OpenAI-compatible tool calling — so the pipeline still produces real
+  model reasoning even if the TrueForge sidecar or the primary provider is
+  briefly unavailable. No agent's reasoning is hardcoded or templated at any
+  layer of this fallback chain — every classification, fit assessment, plan,
+  and narrative is a real model call over real data.
+- **Human approval**: every generated outreach plan, and any stage
+  classification the model itself was unconfident about, is persisted as
+  `pending_approval` and requires an explicit approve/reject action through
+  the API/UI before being treated as final. TrueForge separately supports a
+  native per-tool approval checkpoint (`require_approval_for_tools`, which
+  pauses a turn until a `user.tool_approval` is submitted) — this build does
+  not gate the enrichment tool behind it, since the application-level
+  plan/classification approval is the actual user-facing checkpoint that
+  matters for this product, but the primitive is real and demonstrated in
+  `docs/DECISIONS.md`.
 - **Frontend**: React 18 + Vite + TypeScript, Tailwind CSS, a component
   library built on Radix primitives in the shadcn/ui pattern (owned in this
   codebase, not an installed black box), React Router, TanStack Query,
@@ -65,7 +92,10 @@ backend/
   app/
     agents/        five agent modules + the LangGraph graph definition
     api/routes/    FastAPI routers
-    core/          config and the single Gemini client wrapper
+    core/          config, the TrueForge HTTP client, the Gemini/HF LLM
+                   fallback, the Daytona sandbox wrapper, and the one-time
+                   TrueForge provider bootstrap script
+    mcp_tools/     the remote MCP server exposing enrichment tools
     db/            SQLAlchemy session/base + demo data seeding
     models/        SQLAlchemy ORM models
     schemas/       Pydantic request/response schemas
@@ -86,8 +116,12 @@ docs/              all required documentation deliverables
 
 ### Prerequisites
 - Python 3.11+
-- Node.js 18+ and npm
+- Node.js 22+ and npm (required by the TrueForge agent harness)
 - A Gemini API key (https://ai.google.dev)
+- Optional: a Hugging Face access token (https://huggingface.co/settings/tokens)
+  for the LLM fallback, and a Daytona API key + sandbox (https://app.daytona.io)
+  for sandboxed signal scoring. Both are genuinely optional — everything
+  still runs correctly without them, just with less redundancy.
 
 ### 1. Configure environment variables
 
@@ -107,23 +141,57 @@ HF_MODEL=Qwen/Qwen3-4B-Instruct-2507:nscale
 DAYTONA_API_KEY=your-daytona-api-key
 DAYTONA_API_URL=https://app.daytona.io/api
 DAYTONA_SANDBOX_ID=your-sandbox-id
+
+# Optional: point at a different local TrueForge instance, or set
+# TRUEFORGE_ENABLED=false to skip the harness and call Gemini/HF directly
+TRUEFORGE_URL=http://localhost:8790
+TRUEFORGE_ENABLED=true
+TRUEFORGE_MODEL=google-gemini/gemini-2-5-flash
 ```
 
-### 2. Backend
+### 2. Start the TrueForge agent harness
+
+```bash
+npx @truefoundry/trueforge@latest --port 8790
+```
+
+This starts a local, SQLite-backed TrueForge instance on `http://localhost:8790`
+(first run downloads the package). Leave it running in its own terminal.
+
+### 3. Start the enrichment MCP server
+
+```bash
+cd backend
+source venv/bin/activate   # after step 4 below has created the venv
+python -m app.mcp_tools.enrichment_server
+```
+
+This serves the firmographic enrichment tools at `http://127.0.0.1:8791/mcp`.
+Leave it running in its own terminal.
+
+### 4. Backend
 
 ```bash
 cd backend
 python3 -m venv venv
 source venv/bin/activate
 pip install fastapi "uvicorn[standard]" sqlalchemy pydantic pydantic-settings \
-  python-dotenv python-multipart langgraph google-genai daytona pytest httpx ruff
+  python-dotenv python-multipart langgraph google-genai daytona mcp pytest httpx ruff
+python -m app.core.trueforge_setup   # registers model/sandbox/MCP providers with TrueForge
 uvicorn app.main:app --reload
 ```
 
 The API is now served at `http://localhost:8000`, with interactive docs at
 `http://localhost:8000/docs`. Tables are created automatically on startup.
+Individual TrueForge agents (one per Signalis agent) register themselves
+automatically the first time each one runs.
 
-### 3. Load sample data (optional but recommended for a first run)
+If TrueForge or the MCP server is not running, every agent call still works —
+`app/agents/common.run_agent_reasoning` catches the transport failure and
+falls back to a direct Gemini/Hugging-Face call — but the MCP tool call and
+the TrueForge-native agent loop will not be exercised in that case.
+
+### 5. Load sample data (optional but recommended for a first run)
 
 ```bash
 cd backend
@@ -139,7 +207,7 @@ the last month). The same files can also be loaded from the frontend's Data
 Sources screen via the "Use Sample Data" button, which uploads them through
 the same API endpoints a real CSV/JSON upload would use.
 
-### 4. Frontend
+### 6. Frontend
 
 ```bash
 cd frontend
@@ -173,6 +241,25 @@ The app is served at `http://localhost:5173`.
   distinguished by agent, with its input summary and full reasoning text —
   this is real persisted data, inspectable after the fact, not a live-only
   view.
+- **Real MCP tool use**: With TrueForge and the enrichment MCP server running
+  (setup steps 2-3), any pipeline run's Persona Fit step genuinely discovers
+  and calls the `classify_company_industry` / `estimate_company_size_band`
+  tools over MCP. This is visible directly in TrueForge's own session events
+  (`GET /api/v1/sessions/{id}/events` on the TrueForge harness, port 8790)
+  as real `mcp.initialize` and tool-call events, not just in the agent's
+  final answer.
+- **Sandboxed code execution**: Every Buying Stage Orchestrator run computes
+  its recency/strength-weighted signal score by executing generated Python
+  inside the configured Daytona sandbox; `agent_runs.output.signal_score_computed_via`
+  records `"daytona"` or `"local"` depending on which path actually ran for
+  that request.
+- **Human approval as a harness primitive**: separately from the
+  application-level approval workflow above, TrueForge's own
+  `require_approval_for_tools` mechanism (a real per-tool approval gate that
+  pauses a turn with `required_actions: [{"type": "tool.approval_required"}]`
+  until a `user.tool_approval` turn input is submitted) is demonstrated in
+  `docs/DECISIONS.md` as a capability of the runtime, distinct from the
+  product-level checkpoint the UI exposes.
 
 ## Running tests
 
