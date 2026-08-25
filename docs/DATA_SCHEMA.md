@@ -161,9 +161,19 @@ single lead — one row represents one ranking pass over the whole pipeline.
 |---|---|---|
 | id | string (uuid hex) | primary key |
 | agent_run_id | FK -> agent_runs.id, nullable | the ranking agent's own audit-trail row (`agent_runs.lead_id` is NULL for this run) |
-| ranked_leads | JSON | list of `{lead_id, rank, reasoning}`, one entry per currently-classified lead |
+| ranked_leads | JSON | list of `{lead_id, rank, reasoning, name, company, title, stage, confidence}`, one entry per currently-classified lead |
 | summary | text | one-paragraph narrative explaining the overall priority order |
 | created_at | datetime | |
+
+Each `ranked_leads` entry is a self-contained snapshot, not a pointer to
+live `leads`/`stage_classifications` rows: the lead's name, company, title,
+stage, and confidence are baked in at write time. This is deliberate — if
+the lead is reclassified after this ranking ran, `GET /api/ranking/latest`
+still shows the stage/confidence that were true when the ranking was
+generated, so the priority order and its stated reasoning never drift out
+of sync with what is displayed alongside them. It also means reading a
+ranking back needs zero additional database queries regardless of how many
+leads were ranked.
 
 ## Relationships at a glance
 

@@ -114,9 +114,11 @@ numbers used on the dashboard's time-saved chart.
 
 ### `POST /api/ranking/run`
 Runs the Prioritization/Ranking Agent over every currently-classified
-(non-superseded) lead and persists a new `PipelineRanking` snapshot.
-Returns the full ranked list, each entry enriched with the lead's basic
-profile and its current stage/confidence for convenient display. A
+(non-superseded) lead and persists a new `PipelineRanking` snapshot. Each
+returned entry bakes in the lead's name/company/title and its stage/
+confidence *as of this run* — a later reclassification does not change what
+an already-generated ranking reports. Fails with an error if more than 60
+leads are currently classified (a single ranking call is not batched). A
 marketer or another system calls this whenever they want an up-to-date
 "who to contact first" order — typically after running the main pipeline
 for a batch of leads.
