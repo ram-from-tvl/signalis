@@ -159,3 +159,19 @@ class DashboardStats(BaseModel):
     average_agent_latency_seconds: float
     manual_minutes_per_lead_estimate: float
     agent_seconds_per_lead_actual: float
+
+
+class RankedLeadEntry(BaseModel):
+    lead_id: str
+    rank: int
+    reasoning: str
+    lead: LeadOut | None = None
+    stage: str | None = None
+    confidence: float | None = None
+
+
+class PipelineRankingOut(BaseModel):
+    id: str
+    summary: str
+    ranked_leads: list[RankedLeadEntry]
+    created_at: datetime.datetime
