@@ -167,3 +167,20 @@ class ApprovalEvent(Base):
     action: Mapped[str] = mapped_column(String, nullable=False)  # approve|reject|edit
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_now)
+
+
+class PipelineRanking(Base):
+    """One snapshot produced by the Prioritization/Ranking Agent: an ordered
+    list of leads across the whole pipeline, each with a rank and a
+    plain-language reason, so a rep knows who to contact first. Snapshots are
+    append-only like stage_classifications/outreach_plans — re-running the
+    agent creates a new row rather than mutating the previous ranking."""
+
+    __tablename__ = "pipeline_rankings"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=_uuid)
+    agent_run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
+    ranked_leads: Mapped[list] = mapped_column(JSON, default=list)
+    # Each entry: {"lead_id": str, "rank": int, "reasoning": str}
+    summary: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=_now)
