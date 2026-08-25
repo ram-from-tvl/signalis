@@ -7,6 +7,7 @@ import type {
   LeadListItem,
   Persona,
   PersonaInput,
+  PipelineRanking,
   PipelineRunResponse,
   Solution,
   SolutionInput,
@@ -81,4 +82,9 @@ export const approvalsApi = {
 
 export const dashboardApi = {
   stats: () => apiClient.get<DashboardStats>("/api/dashboard/stats").then((r) => r.data),
+}
+
+export const rankingApi = {
+  run: () => apiClient.post<PipelineRanking>("/api/ranking/run").then((r) => r.data),
+  latest: () => apiClient.get<PipelineRanking | null>("/api/ranking/latest").then((r) => r.data),
 }

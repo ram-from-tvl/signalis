@@ -158,3 +158,19 @@ export interface DashboardStats {
   manual_minutes_per_lead_estimate: number
   agent_seconds_per_lead_actual: number
 }
+
+export interface RankedLeadEntry {
+  lead_id: string
+  rank: number
+  reasoning: string
+  lead: Lead | null
+  stage: Stage | null
+  confidence: number | null
+}
+
+export interface PipelineRanking {
+  id: string
+  summary: string
+  ranked_leads: RankedLeadEntry[]
+  created_at: string
+}
