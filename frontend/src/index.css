@@ -1,0 +1,122 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 220 24% 97%;
+  --foreground: 222 39% 11%;
+
+  --surface: 0 0% 100%;
+  --surface-raised: 0 0% 100%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 222 39% 11%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 39% 11%;
+
+  --primary: 222 47% 16%;
+  --primary-foreground: 210 20% 98%;
+
+  --secondary: 220 20% 93%;
+  --secondary-foreground: 222 39% 16%;
+
+  --muted: 220 16% 93%;
+  --muted-foreground: 220 10% 45%;
+
+  --accent: 21 90% 55%;
+  --accent-foreground: 20 40% 12%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 152 55% 34%;
+  --success-foreground: 0 0% 100%;
+
+  --warning: 38 92% 50%;
+  --warning-foreground: 30 40% 12%;
+
+  --stage-early: 220 14% 55%;
+  --stage-mid: 38 92% 50%;
+  --stage-late: 152 55% 34%;
+
+  --border: 220 15% 88%;
+  --input: 220 15% 88%;
+  --ring: 21 90% 55%;
+
+  --radius: 10px;
+}
+
+.dark {
+  --background: 222 45% 7%;
+  --foreground: 210 20% 96%;
+
+  --surface: 222 40% 10%;
+  --surface-raised: 222 36% 13%;
+
+  --card: 222 40% 10%;
+  --card-foreground: 210 20% 96%;
+
+  --popover: 222 40% 10%;
+  --popover-foreground: 210 20% 96%;
+
+  --primary: 210 20% 96%;
+  --primary-foreground: 222 47% 12%;
+
+  --secondary: 222 30% 16%;
+  --secondary-foreground: 210 20% 96%;
+
+  --muted: 222 25% 16%;
+  --muted-foreground: 220 12% 65%;
+
+  --accent: 21 90% 58%;
+  --accent-foreground: 20 40% 10%;
+
+  --destructive: 0 70% 55%;
+  --destructive-foreground: 0 0% 100%;
+
+  --success: 152 50% 45%;
+  --success-foreground: 152 40% 8%;
+
+  --warning: 38 92% 55%;
+  --warning-foreground: 30 40% 10%;
+
+  --stage-early: 220 12% 60%;
+  --stage-mid: 38 92% 55%;
+  --stage-late: 152 50% 45%;
+
+  --border: 222 25% 20%;
+  --input: 222 25% 20%;
+  --ring: 21 90% 58%;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: 'Manrope', system-ui, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+h1, h2, h3, h4, h5, h6, .font-heading {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+::selection {
+  background-color: hsl(var(--accent) / 0.25);
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: hsl(var(--border));
+  border-radius: 999px;
+}
