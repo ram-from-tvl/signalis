@@ -37,7 +37,16 @@ lead — updating its understanding automatically whenever new signals arrive.
   `GEMINI_MODEL`) through the `google-genai` SDK, using structured JSON
   response schemas for every agent call. No agent's reasoning is hardcoded
   or templated — every classification, fit assessment, plan, and narrative
-  is a real model call over real data.
+  is a real model call over real data. If Gemini fails after retries, the
+  same call is retried once against a Hugging Face Inference Providers model
+  (`Qwen/Qwen3-4B-Instruct-2507` by default, configurable via `HF_MODEL`)
+  using OpenAI-compatible tool calling, so a transient outage on the primary
+  provider does not stop the pipeline.
+- **Sandboxed execution**: the buying-stage signal-strength score is computed
+  by running generated Python inside a Daytona sandbox rather than as
+  in-process business logic, with a local fallback computation if the
+  sandbox is briefly unreachable. Which path actually ran is recorded on
+  every buying-stage agent run.
 - **Frontend**: React 18 + Vite + TypeScript, Tailwind CSS, a component
   library built on Radix primitives in the shadcn/ui pattern (owned in this
   codebase, not an installed black box), React Router, TanStack Query,
@@ -88,6 +97,16 @@ Create a `.env` file at the repository root (not inside `backend/`):
 GEMINI_API_KEY=your-key-here
 GEMINI_MODEL=gemini-2.5-flash
 DATABASE_URL=sqlite:///signalis.db
+
+# Optional: used only if Gemini is unavailable or a request fails
+HF_TOKEN=your-hugging-face-token
+HF_MODEL=Qwen/Qwen3-4B-Instruct-2507:nscale
+
+# Optional: used only for sandboxed signal-scoring execution; falls back to
+# an equivalent local computation if unset or unreachable
+DAYTONA_API_KEY=your-daytona-api-key
+DAYTONA_API_URL=https://app.daytona.io/api
+DAYTONA_SANDBOX_ID=your-sandbox-id
 ```
 
 ### 2. Backend
@@ -97,7 +116,7 @@ cd backend
 python3 -m venv venv
 source venv/bin/activate
 pip install fastapi "uvicorn[standard]" sqlalchemy pydantic pydantic-settings \
-  python-dotenv python-multipart langgraph google-genai pytest httpx ruff
+  python-dotenv python-multipart langgraph google-genai daytona pytest httpx ruff
 uvicorn app.main:app --reload
 ```
 

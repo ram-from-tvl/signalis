@@ -110,3 +110,34 @@ heavier runtime architecture that was scoped out.
 - There is no authentication/authorization layer. This is a single-tenant
   demo system; adding real auth was out of scope for the time budget and
   does not change any of the agentic behavior being demonstrated.
+
+## LLM fallback and sandboxed execution (added after initial build)
+
+- **Gemini-to-Hugging-Face fallback.** `generate_json` tries Gemini first and,
+  only if it fails after retries, retries the same call once against a
+  Hugging Face Inference Providers model using OpenAI-compatible tool
+  calling. The fallback model must support both `tools` and structured
+  output; `Qwen/Qwen3-4B-Instruct-2507` on the `nscale` provider was verified
+  to support both, and its `tool_choice` only accepts `"auto"`, not
+  `"required"` — the fallback call is built around that constraint (a single
+  tool definition with `tool_choice: "auto"`) rather than assuming full
+  OpenAI tool-calling semantics.
+- **Daytona-sandboxed signal scoring.** The buying-stage agent's
+  recency/strength-weighted signal score is computed by generating a small
+  Python script and executing it inside a Daytona sandbox
+  (`app/core/sandbox.py`), rather than running that arithmetic in-process.
+  If the sandbox is unconfigured or briefly unreachable, the same
+  computation runs locally as a fallback so the pipeline never hard-fails on
+  a sandbox outage; the agent's persisted output records which path
+  (`daytona` or `local`) actually executed for that run, so this is
+  independently verifiable after the fact rather than only claimed.
+- **What this does not yet include.** The orchestration layer is still a
+  hand-rolled LangGraph `StateGraph`, not a dedicated third-party agent
+  harness runtime — LangGraph already provides real typed shared state and a
+  genuine conditional edge for the approval checkpoint, and swapping the
+  underlying execution engine did not change what any agent reasons about.
+  Only one sandboxed-execution step and one real external-service fallback
+  path were added; other agents still call Gemini/HF directly rather than
+  through a shared tool-calling protocol. Extending sandboxed execution and
+  a shared tool-calling layer to the remaining agents is a natural next
+  step, not a correctness gap in what currently exists.

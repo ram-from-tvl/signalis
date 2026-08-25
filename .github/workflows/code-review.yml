@@ -24,7 +24,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install fastapi "uvicorn[standard]" sqlalchemy pydantic pydantic-settings \
-            python-dotenv python-multipart langgraph google-genai pytest httpx ruff
+            python-dotenv python-multipart langgraph google-genai daytona pytest httpx ruff
 
       - name: Run ruff lint
         run: ruff check app tests
