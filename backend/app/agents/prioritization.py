@@ -9,6 +9,7 @@ per call instead of one) differs.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -17,6 +18,8 @@ from app.agents.common import finish_run, run_agent_reasoning, start_run
 from app.core.config import get_settings
 from app.core.llm import LLMError
 from app.models.entities import Lead, StageClassification
+
+logger = logging.getLogger("signalis.agents")
 
 SYSTEM_INSTRUCTION = """You are the Prioritization/Ranking Agent inside a B2B sales intelligence
 system. You are given every lead currently in the pipeline with its buying stage, confidence
@@ -28,6 +31,68 @@ time-sensitive signal can outrank a low-confidence late-stage lead). For every l
 specific reason for its rank a rep could read in five seconds — not a repeat of the stage label.
 Include every lead you are given, exactly once, with no gaps or duplicate ranks."""
 
+# The prompt embeds one row (and the model must emit one ranking entry) per
+# lead, with no batching/summarization — bounded here so a very large
+# pipeline fails predictably with a clear error rather than silently
+# exceeding a provider's context window or the TrueForge turn timeout.
+MAX_LEADS_PER_RANKING_CALL = 60
+
+
+class PrioritizationError(RuntimeError):
+    """Raised when the pipeline is too large to rank in a single call."""
+
+
+def _normalize_ranking(
+    raw_ranking: list[dict], leads_with_classifications: list[tuple[Lead, StageClassification]]
+) -> list[dict]:
+    """Force the model's output to satisfy the contract stated in the system
+    prompt (every lead exactly once, ranks 1..N with no gaps or duplicates),
+    since the JSON schema alone cannot enforce uniqueness/completeness and a
+    malformed or partial response must never silently produce a broken
+    snapshot. Missing leads are appended in their original order; duplicate
+    or out-of-range ranks are discarded and reassigned sequentially."""
+    by_id = {lead.id: (lead, classification) for lead, classification in leads_with_classifications}
+
+    # Sort by the model's declared rank first (falling back to input order
+    # for entries with a missing/non-numeric rank), so a correctly-ordered
+    # response with duplicate or gapped rank *numbers* still comes out in
+    # the model's intended order rather than raw list order.
+    def _declared_rank(entry: dict) -> int:
+        rank = entry.get("rank")
+        return rank if isinstance(rank, int) else len(raw_ranking) + 1
+
+    seen: set[str] = set()
+    ordered_entries: list[dict] = []
+    for entry in sorted(raw_ranking, key=_declared_rank):
+        lead_id = entry.get("lead_id")
+        if lead_id in by_id and lead_id not in seen:
+            seen.add(lead_id)
+            ordered_entries.append(entry)
+
+    for lead_id, (lead, _classification) in by_id.items():
+        if lead_id not in seen:
+            ordered_entries.append(
+                {"lead_id": lead_id, "reasoning": "Not ranked by the model; appended for completeness."}
+            )
+            seen.add(lead_id)
+
+    normalized = []
+    for rank, entry in enumerate(ordered_entries, start=1):
+        lead, classification = by_id[entry["lead_id"]]
+        normalized.append(
+            {
+                "lead_id": lead.id,
+                "rank": rank,
+                "reasoning": entry.get("reasoning") or "",
+                "name": lead.name,
+                "company": lead.company,
+                "title": lead.title,
+                "stage": classification.stage,
+                "confidence": classification.confidence,
+            }
+        )
+    return normalized
+
 
 def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead, StageClassification]]) -> dict[str, Any]:
     input_summary = f"Ranking {len(leads_with_classifications)} classified lead(s) across the pipeline"
@@ -37,6 +102,14 @@ def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead,
         result = {"ranking": [], "summary": "No classified leads to rank yet.", "agent_run_id": run.id}
         finish_run(db, run, output=result, reasoning=result["summary"])
         return result
+
+    if len(leads_with_classifications) > MAX_LEADS_PER_RANKING_CALL:
+        error = PrioritizationError(
+            f"{len(leads_with_classifications)} classified leads exceeds the "
+            f"{MAX_LEADS_PER_RANKING_CALL}-lead limit for a single ranking call"
+        )
+        finish_run(db, run, output={"error": str(error)}, reasoning=str(error), status="failed")
+        raise error
 
     rows = "\n".join(
         f"- lead_id={lead.id}, name={lead.name}, company={lead.company}, "
@@ -84,10 +157,14 @@ def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead,
         finish_run(db, run, output={"error": str(exc)}, reasoning=str(exc), status="failed")
         raise
 
-    valid_lead_ids = {lead.id for lead, _ in leads_with_classifications}
-    ranking = [entry for entry in result.get("ranking", []) if entry.get("lead_id") in valid_lead_ids]
-    ranking.sort(key=lambda e: e.get("rank", len(ranking) + 1))
-    result["ranking"] = ranking
+    raw_ranking = result.get("ranking", [])
+    if len(raw_ranking) != len(leads_with_classifications):
+        logger.warning(
+            "Prioritization agent returned %d ranking entries for %d leads; normalizing.",
+            len(raw_ranking),
+            len(leads_with_classifications),
+        )
+    result["ranking"] = _normalize_ranking(raw_ranking, leads_with_classifications)
     result["agent_run_id"] = run.id
 
     finish_run(db, run, output=result, reasoning=result.get("summary", ""))
