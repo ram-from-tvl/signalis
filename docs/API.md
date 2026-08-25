@@ -109,3 +109,20 @@ Aggregate pipeline statistics: total leads, stage distribution, plans
 generated, plans pending approval, average classification confidence,
 measured average agent latency, and the manual-vs-agent time comparison
 numbers used on the dashboard's time-saved chart.
+
+## Ranking
+
+### `POST /api/ranking/run`
+Runs the Prioritization/Ranking Agent over every currently-classified
+(non-superseded) lead and persists a new `PipelineRanking` snapshot.
+Returns the full ranked list, each entry enriched with the lead's basic
+profile and its current stage/confidence for convenient display. A
+marketer or another system calls this whenever they want an up-to-date
+"who to contact first" order — typically after running the main pipeline
+for a batch of leads.
+
+### `GET /api/ranking/latest`
+Returns the most recently generated `PipelineRanking` snapshot, or `null`
+if the ranking agent has never been run. Used by the dashboard's Priority
+Queue panel to show the last known priority order without re-running the
+agent on every page load.

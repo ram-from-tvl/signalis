@@ -1,14 +1,16 @@
 # Agent Graph
 
-Signalis runs five agents as nodes in a LangGraph `StateGraph`, but each
-node's actual reasoning executes as a session/turn on a local TrueForge
-agent harness process rather than a bare model API call. TrueForge owns the
-real agent loop for that step — model calls, MCP tool discovery/execution,
-context management — and the Python graph node only starts the turn and
-reads back its structured output (`app/core/trueforge.py`). LangGraph
-remains the Python-side coordinator: it is what decides node order and
-evaluates the one real conditional edge (the confidence-threshold branch),
-while TrueForge is what each individual node actually runs on.
+Signalis runs five agents as nodes in a LangGraph `StateGraph`, plus a sixth,
+standalone Prioritization/Ranking Agent that is not part of that per-lead
+graph (see "The sixth agent" below). Each node's actual reasoning executes
+as a session/turn on a local TrueForge agent harness process rather than a
+bare model API call. TrueForge owns the real agent loop for that step —
+model calls, MCP tool discovery/execution, context management — and the
+Python graph node only starts the turn and reads back its structured output
+(`app/core/trueforge.py`). LangGraph remains the Python-side coordinator: it
+is what decides node order and evaluates the one real conditional edge (the
+confidence-threshold branch), while TrueForge is what each individual node
+actually runs on.
 
 ```mermaid
 flowchart TD
@@ -28,11 +30,18 @@ flowchart TD
     Human -->|approve| Approved[Classification / Plan marked approved]
     Human -->|reject| Rejected[Classification / Plan marked rejected]
     Human -->|edit touchpoints, then approve| Approved
+
+    RankStart([Marketer clicks Rank Pipeline]) --> Rank["Prioritization/Ranking Agent\n(TrueForge session)"]
+    ClassStore[(stage_classifications\nnon-superseded rows)] --> Rank
+    Rank --> RankPersist[(Persist PipelineRanking snapshot)]
 ```
 
 Every "TrueForge session" box falls back to a direct Gemini call, and then
 to a Hugging Face model, if TrueForge is not running or a turn fails — see
-`docs/DECISIONS.md` for the fallback chain and why it exists.
+`docs/DECISIONS.md` for the fallback chain and why it exists. The
+Prioritization/Ranking Agent (bottom of the diagram) runs independently of
+the per-lead pipeline above it — it is triggered separately and reads across
+all leads at once rather than being a node in the per-lead graph.
 
 ## Node responsibilities and handoffs
 
@@ -141,3 +150,25 @@ a lead or a marketer asks to regenerate a plan. Each run supersedes the
 lead's previous `stage_classification` and `outreach_plan` (via
 `superseded_by_id` / `status="superseded"`) rather than overwriting them, so
 the full decision history remains inspectable.
+
+## The sixth agent: Prioritization/Ranking
+
+Unlike the five agents above, the Prioritization/Ranking Agent
+(`app/agents/prioritization.py`) does not run per-lead as part of the graph.
+It runs once across the whole pipeline, on demand (`POST /api/ranking/run`),
+over every lead's current (non-superseded) `stage_classification`. Given
+every lead's stage, confidence, and justification in one prompt, it returns
+a single priority order — rank 1 is who to contact first — with a specific,
+non-generic reason per lead, using the same TrueForge session/turn mechanism
+and Gemini→Hugging Face fallback chain as the other five agents. It
+deliberately does not just sort by stage label: a high-confidence, recently
+active mid-stage lead can legitimately outrank a low-confidence, stale
+late-stage one, and the agent's own reasoning is expected to say so.
+
+Results are persisted as an append-only `PipelineRanking` snapshot (see
+`docs/DATA_SCHEMA.md`), the same pattern as `stage_classifications` and
+`outreach_plans` — re-running the ranking creates a new snapshot rather than
+mutating the previous one, so a manager can see how the priority order
+shifted over time. The audit trail for this agent's own run is a regular
+`agent_runs` row with `lead_id = NULL`, since it reasons about the pipeline
+as a whole rather than any single lead.

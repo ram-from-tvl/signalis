@@ -151,6 +151,20 @@ An immutable log of every approve/reject/edit action taken by a marketer.
 | notes | text | optional marketer commentary |
 | created_at | datetime | |
 
+### pipeline_rankings
+
+An append-only snapshot produced by the Prioritization/Ranking Agent each
+time it runs. Unlike every other table above, this one is not scoped to a
+single lead — one row represents one ranking pass over the whole pipeline.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | string (uuid hex) | primary key |
+| agent_run_id | FK -> agent_runs.id, nullable | the ranking agent's own audit-trail row (`agent_runs.lead_id` is NULL for this run) |
+| ranked_leads | JSON | list of `{lead_id, rank, reasoning}`, one entry per currently-classified lead |
+| summary | text | one-paragraph narrative explaining the overall priority order |
+| created_at | datetime | |
+
 ## Relationships at a glance
 
 ```
@@ -167,4 +181,6 @@ personas            solutions
           +--> stage_classifications --> outreach_plans
                        |                       |
                        +----> approval_events <+
+                       |
+                       +----> pipeline_rankings (reads across all leads at once)
 ```
