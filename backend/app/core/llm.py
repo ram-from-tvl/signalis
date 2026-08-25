@@ -30,6 +30,32 @@ _RETRY_BACKOFF_SECONDS = 2.0
 _HF_ROUTER_URL = "https://router.huggingface.co/v1/chat/completions"
 
 
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    """Best-effort recovery of a JSON object from free-text model output.
+
+    Tries the whole string first, then the widest {...} span, since some
+    models wrap JSON in prose or markdown code fences despite instructions.
+    """
+    text = text.strip()
+    if text.startswith("```"):
+        text = text.strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:]
+        text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
 class LLMError(RuntimeError):
     """Raised when every configured LLM provider fails or returns unparsable output."""
 
@@ -98,11 +124,19 @@ def _call_hf_fallback_json(
         raise LLMError("HF_TOKEN is not configured, no fallback available")
 
     tool_name = "submit_result"
+    # This provider only supports tool_choice "auto"/"none" (not "required"),
+    # so the model can technically still answer in free text. The system
+    # instruction is strengthened to make that the unlikely path, and a
+    # free-text JSON extraction is tried as a second line of defense below.
+    forced_instruction = (
+        f"{system_instruction}\n\nYou MUST respond by calling the `{tool_name}` tool exactly once "
+        "with the complete result. Do not respond with plain text."
+    )
     payload = {
         "model": settings.hf_model,
         "temperature": temperature,
         "messages": [
-            {"role": "system", "content": system_instruction},
+            {"role": "system", "content": forced_instruction},
             {"role": "user", "content": prompt},
         ],
         "tools": [
@@ -131,10 +165,20 @@ def _call_hf_fallback_json(
         raise LLMError(f"Hugging Face fallback call failed: {exc}") from exc
 
     try:
-        tool_calls = data["choices"][0]["message"]["tool_calls"]
-        arguments = tool_calls[0]["function"]["arguments"]
+        message = data["choices"][0]["message"]
     except (KeyError, IndexError) as exc:
-        raise LLMError(f"Hugging Face fallback returned no usable tool call: {data}") from exc
+        raise LLMError(f"Hugging Face fallback returned an unexpected response: {data}") from exc
+
+    tool_calls = message.get("tool_calls") or []
+    if tool_calls:
+        arguments = tool_calls[0]["function"]["arguments"]
+    else:
+        # Model answered in free text instead of calling the tool. Try to
+        # recover a JSON object from the content rather than failing outright.
+        arguments = _extract_json_object(message.get("content") or "")
+        if arguments is None:
+            raise LLMError(f"Hugging Face fallback returned no usable tool call or JSON: {data}")
+        return arguments
 
     try:
         return json.loads(arguments)
