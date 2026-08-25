@@ -27,6 +27,9 @@ lead — updating its understanding automatically whenever new signals arrive.
 - Re-runs its full reasoning chain on demand when new signals arrive for a
   lead, producing an updated classification and a regenerated plan without
   a human re-deriving anything from scratch.
+- Ranks the whole pipeline by contact priority on demand, so a rep knows who
+  to call first — not a raw score, but an explainable order with a reason
+  per lead.
 
 ## Architecture
 
@@ -90,7 +93,8 @@ manual-vs-agent time comparison.
 ```
 backend/
   app/
-    agents/        five agent modules + the LangGraph graph definition
+    agents/        six agent modules (five-agent LangGraph pipeline plus the
+                   standalone Prioritization/Ranking agent)
     api/routes/    FastAPI routers
     core/          config, the TrueForge HTTP client, the Gemini/HF LLM
                    fallback, the Daytona sandbox wrapper, and the one-time
@@ -260,6 +264,12 @@ The app is served at `http://localhost:5173`.
   until a `user.tool_approval` turn input is submitted) is demonstrated in
   `docs/DECISIONS.md` as a capability of the runtime, distinct from the
   product-level checkpoint the UI exposes.
+- **Pipeline-wide prioritization**: On the Dashboard, click "Rank Pipeline"
+  to run the Prioritization/Ranking Agent over every currently-classified
+  lead in one call. It returns a single contact-priority order with a
+  specific reason per lead — e.g. a high-confidence, recently-active mid-stage
+  lead can legitimately outrank a low-confidence late-stage one — not a
+  naive sort by stage label.
 
 ## Running tests
 

@@ -1,6 +1,11 @@
-import { useQuery } from "@tanstack/react-query"
-import { dashboardApi } from "@/api/endpoints"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { Link } from "react-router-dom"
+import { dashboardApi, rankingApi } from "@/api/endpoints"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { StageBadge } from "@/components/leads/StageBadge"
+import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
+import { useToast } from "@/components/ui/toast-context"
 import {
   Bar,
   BarChart,
@@ -11,7 +16,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-import { Users, FileCheck, Gauge, Timer } from "lucide-react"
+import { Users, FileCheck, Gauge, Timer, ListOrdered } from "lucide-react"
 
 const STAGE_COLORS: Record<string, string> = {
   early: "hsl(220 14% 55%)",
@@ -47,9 +52,26 @@ function StatTile({
 }
 
 export function DashboardPage() {
+  const queryClient = useQueryClient()
+  const { push } = useToast()
+
   const { data: stats, isLoading } = useQuery({
     queryKey: ["dashboard-stats"],
     queryFn: dashboardApi.stats,
+  })
+
+  const { data: ranking, isLoading: rankingLoading } = useQuery({
+    queryKey: ["pipeline-ranking"],
+    queryFn: rankingApi.latest,
+  })
+
+  const runRanking = useMutation({
+    mutationFn: rankingApi.run,
+    onSuccess: (data) => {
+      queryClient.setQueryData(["pipeline-ranking"], data)
+      push({ title: `Ranked ${data.ranked_leads.length} lead(s)`, variant: "success" })
+    },
+    onError: (err: Error) => push({ title: "Ranking failed", description: err.message, variant: "error" }),
   })
 
   if (isLoading || !stats) {
@@ -179,6 +201,67 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">
+          <div>
+            <CardTitle>Priority Queue</CardTitle>
+            <CardDescription>
+              Who to contact first across the whole pipeline, ranked by the Prioritization Agent.
+            </CardDescription>
+          </div>
+          <Button
+            variant="accent"
+            size="sm"
+            onClick={() => runRanking.mutate()}
+            disabled={runRanking.isPending || !stats.total_leads}
+          >
+            <ListOrdered className="h-4 w-4" />
+            {runRanking.isPending ? "Ranking..." : "Rank Pipeline"}
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {rankingLoading && <p className="text-sm text-muted-foreground">Loading ranking...</p>}
+          {!rankingLoading && !ranking && (
+            <p className="text-sm text-muted-foreground">
+              No ranking yet. Classify some leads, then click "Rank Pipeline" to see who to contact first.
+            </p>
+          )}
+          {ranking && ranking.ranked_leads.length === 0 && (
+            <p className="text-sm text-muted-foreground">{ranking.summary}</p>
+          )}
+          {ranking && ranking.ranked_leads.length > 0 && (
+            <div className="flex flex-col gap-4">
+              <p className="text-sm text-muted-foreground leading-relaxed">{ranking.summary}</p>
+              <ol className="flex flex-col gap-2">
+                {ranking.ranked_leads.map((entry) => (
+                  <li key={entry.lead_id}>
+                    <Link
+                      to={`/leads/${entry.lead_id}`}
+                      className="flex items-center gap-4 rounded-lg border border-border p-3 hover:border-accent/50 hover:shadow-raised transition-[border-color,box-shadow] duration-200"
+                    >
+                      <span className="font-heading text-lg font-bold text-accent w-8 text-center shrink-0">
+                        {entry.rank}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold truncate">{entry.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {entry.title || "Title unknown"} at {entry.company}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-1">{entry.reasoning}</p>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <StageBadge stage={entry.stage} />
+                        <ConfidenceMeter confidence={entry.confidence} showLabel={false} />
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

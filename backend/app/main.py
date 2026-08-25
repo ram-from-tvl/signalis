@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import approvals, dashboard, leads, personas, pipeline, solutions, uploads
+from app.api.routes import approvals, dashboard, leads, personas, pipeline, ranking, solutions, uploads
 from app.core.config import get_settings
 from app.db.base import Base
 from app.db.session import engine
@@ -42,3 +42,4 @@ app.include_router(leads.router)
 app.include_router(pipeline.router)
 app.include_router(approvals.router)
 app.include_router(dashboard.router)
+app.include_router(ranking.router)
