@@ -124,7 +124,7 @@ export function LeadPipelinePage() {
             transition={{ duration: 0.2, delay: Math.min(i * 0.02, 0.3) }}
           >
             <Link to={`/leads/${item.lead.id}`}>
-              <Card className="hover:border-accent/50 hover:shadow-raised transition-all">
+              <Card className="hover:border-accent/50 hover:shadow-raised transition-[border-color,box-shadow] duration-200">
                 <CardContent className="py-4 flex flex-col md:flex-row md:items-center gap-3 md:gap-6">
                   <div className="flex-1 min-w-0">
                     <p className="font-heading font-semibold truncate">{item.lead.name}</p>
