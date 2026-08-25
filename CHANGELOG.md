@@ -12,6 +12,21 @@ once a `1.0.0` tag is cut.
 - Repository-wide documentation set: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
   `SECURITY.md`, `docs/ARCHITECTURE.md`, `backend/README.md`,
   `frontend/README.md`, `LICENSE` (MIT), and issue/PR templates.
+- `.pr_agent.toml` configuring Qodo Merge: automatic review and description
+  on every pull request, re-review on push, custom issue and compliance
+  guidelines specific to this codebase's known failure patterns.
+
+### Changed
+- Split `app/models/entities.py` and `app/schemas/schemas.py` into
+  per-domain modules under `app/models/` and `app/schemas/`, each re-exported
+  from a clean package `__init__.py`. Fixed a pre-existing gap where
+  `PipelineRanking` wasn't exported from `app.models` at all.
+- Added `app/api/router.py` to aggregate all route modules under one router.
+- Renamed `app/core/trueforge_setup.py` to `trueforge_bootstrap.py`.
+- Modernized `app/main.py`'s startup hook to a `lifespan` context manager.
+- Filled in `[project]` metadata in `backend/pyproject.toml` and added
+  `backend/requirements.txt`; CI now installs from the pinned lockfile
+  instead of an unconstrained or hardcoded dependency list.
 
 ## [0.4.0] — UI redesign
 
