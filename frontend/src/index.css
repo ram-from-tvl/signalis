@@ -1,95 +1,119 @@
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Instrument+Sans:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/*
+  Signalis design tokens — a warm, muted, cool-leaning light palette
+  (sage/slate secondary surfaces, terracotta accent) applied per the
+  60/30/10 rule: warm off-white dominates every screen, sage-slate
+  surfaces carry structure (cards, sidebar, secondary controls), and
+  terracotta is reserved for the handful of elements that should draw
+  the eye (primary actions, active states, links).
+*/
 :root {
-  --background: 220 24% 97%;
-  --foreground: 222 39% 11%;
+  --background: 60 23% 97%;
+  --foreground: 160 10% 18%;
 
   --surface: 0 0% 100%;
   --surface-raised: 0 0% 100%;
 
   --card: 0 0% 100%;
-  --card-foreground: 222 39% 11%;
+  --card-foreground: 160 10% 18%;
 
   --popover: 0 0% 100%;
-  --popover-foreground: 222 39% 11%;
+  --popover-foreground: 160 10% 18%;
 
-  --primary: 222 47% 16%;
-  --primary-foreground: 210 20% 98%;
+  --primary: 160 10% 18%;
+  --primary-foreground: 60 23% 97%;
 
-  --secondary: 220 20% 93%;
-  --secondary-foreground: 222 39% 16%;
+  --secondary: 132 12% 92%;
+  --secondary-foreground: 160 12% 22%;
 
-  --muted: 220 16% 93%;
-  --muted-foreground: 220 10% 45%;
+  --muted: 120 11% 95%;
+  --muted-foreground: 157 6% 43%;
 
-  --accent: 21 90% 55%;
-  --accent-foreground: 20 40% 12%;
+  --accent: 15 51% 53%;
+  --accent-foreground: 18 100% 98%;
 
-  --destructive: 0 72% 51%;
+  --destructive: 5 51% 53%;
   --destructive-foreground: 0 0% 100%;
 
-  --success: 152 55% 34%;
+  --success: 143 21% 45%;
   --success-foreground: 0 0% 100%;
 
-  --warning: 38 92% 50%;
+  --warning: 39 63% 48%;
   --warning-foreground: 30 40% 12%;
 
-  --stage-early: 220 14% 55%;
-  --stage-mid: 38 92% 50%;
-  --stage-late: 152 55% 34%;
+  --stage-early: 156 7% 43%;
+  --stage-mid: 39 63% 34%;
+  --stage-late: 143 21% 40%;
 
-  --border: 220 15% 88%;
-  --input: 220 15% 88%;
-  --ring: 21 90% 55%;
+  /* Agent identity colors for the trace view: five muted, evenly-spaced
+     hues from the same desaturated family as the rest of the palette, so
+     the trace reads as one coherent system rather than default Tailwind
+     swatches dropped in unrelated to the theme. */
+  --agent-signal-extraction: 202 20% 56%;
+  --agent-persona-fit: 289 15% 56%;
+  --agent-buying-stage: 15 51% 53%;
+  --agent-outreach-planner: 143 21% 45%;
+  --agent-explainability: 38 38% 50%;
 
-  --radius: 10px;
+  --border: 137 11% 88%;
+  --input: 137 11% 88%;
+  --ring: 15 51% 53%;
+
+  --radius: 12px;
 }
 
 .dark {
-  --background: 222 45% 7%;
-  --foreground: 210 20% 96%;
+  --background: 160 14% 9%;
+  --foreground: 60 15% 94%;
 
-  --surface: 222 40% 10%;
-  --surface-raised: 222 36% 13%;
+  --surface: 160 13% 12%;
+  --surface-raised: 160 12% 15%;
 
-  --card: 222 40% 10%;
-  --card-foreground: 210 20% 96%;
+  --card: 160 13% 12%;
+  --card-foreground: 60 15% 94%;
 
-  --popover: 222 40% 10%;
-  --popover-foreground: 210 20% 96%;
+  --popover: 160 13% 12%;
+  --popover-foreground: 60 15% 94%;
 
-  --primary: 210 20% 96%;
-  --primary-foreground: 222 47% 12%;
+  --primary: 60 15% 94%;
+  --primary-foreground: 160 14% 12%;
 
-  --secondary: 222 30% 16%;
-  --secondary-foreground: 210 20% 96%;
+  --secondary: 158 12% 18%;
+  --secondary-foreground: 60 15% 94%;
 
-  --muted: 222 25% 16%;
-  --muted-foreground: 220 12% 65%;
+  --muted: 158 10% 17%;
+  --muted-foreground: 150 8% 64%;
 
-  --accent: 21 90% 58%;
-  --accent-foreground: 20 40% 10%;
+  --accent: 15 55% 58%;
+  --accent-foreground: 18 60% 10%;
 
-  --destructive: 0 70% 55%;
+  --destructive: 5 55% 58%;
   --destructive-foreground: 0 0% 100%;
 
-  --success: 152 50% 45%;
-  --success-foreground: 152 40% 8%;
+  --success: 143 25% 52%;
+  --success-foreground: 143 40% 8%;
 
-  --warning: 38 92% 55%;
+  --warning: 39 66% 55%;
   --warning-foreground: 30 40% 10%;
 
-  --stage-early: 220 12% 60%;
-  --stage-mid: 38 92% 55%;
-  --stage-late: 152 50% 45%;
+  --stage-early: 156 8% 55%;
+  --stage-mid: 39 66% 55%;
+  --stage-late: 143 25% 52%;
 
-  --border: 222 25% 20%;
-  --input: 222 25% 20%;
-  --ring: 21 90% 58%;
+  --agent-signal-extraction: 202 24% 62%;
+  --agent-persona-fit: 289 18% 62%;
+  --agent-buying-stage: 15 55% 58%;
+  --agent-outreach-planner: 143 25% 52%;
+  --agent-explainability: 38 42% 56%;
+
+  --border: 158 12% 20%;
+  --input: 158 12% 20%;
+  --ring: 15 55% 58%;
 }
 
 * {
@@ -99,17 +123,18 @@
 body {
   background-color: hsl(var(--background));
   color: hsl(var(--foreground));
-  font-family: 'Manrope', system-ui, sans-serif;
+  font-family: 'Instrument Sans', system-ui, sans-serif;
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
 h1, h2, h3, h4, h5, h6, .font-heading {
-  font-family: 'Space Grotesk', system-ui, sans-serif;
-  letter-spacing: -0.01em;
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-weight: 400;
+  letter-spacing: -0.005em;
 }
 
 ::selection {
-  background-color: hsl(var(--accent) / 0.25);
+  background-color: hsl(var(--accent) / 0.2);
 }
 
 .scrollbar-thin::-webkit-scrollbar {
