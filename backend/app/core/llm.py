@@ -163,6 +163,8 @@ def _call_hf_fallback_json(
         data = resp.json()
     except httpx.HTTPError as exc:
         raise LLMError(f"Hugging Face fallback call failed: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise LLMError(f"Hugging Face fallback returned a non-JSON response body: {exc}") from exc
 
     try:
         message = data["choices"][0]["message"]
