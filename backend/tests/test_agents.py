@@ -19,15 +19,22 @@ def test_buying_stage_confidence_is_clamped_to_valid_range(db_session, sample_le
     with patch(
         "app.agents.buying_stage.generate_json",
         return_value={"stage": "late", "confidence": 1.7, "justification": "test"},
+    ), patch(
+        "app.agents.buying_stage.run_signal_scoring",
+        return_value=({"weighted_score": 2.1, "signal_count": 2}, "local"),
     ):
         result = run_buying_stage(db_session, sample_lead, sample_lead.signals, {"fit": "full_fit"})
     assert result["confidence"] == 1.0
+    assert result["signal_score_computed_via"] == "local"
 
 
 def test_buying_stage_confidence_clamped_when_negative(db_session, sample_lead):
     with patch(
         "app.agents.buying_stage.generate_json",
         return_value={"stage": "early", "confidence": -0.3, "justification": "test"},
+    ), patch(
+        "app.agents.buying_stage.run_signal_scoring",
+        return_value=({"weighted_score": 1.0, "signal_count": 2}, "local"),
     ):
         result = run_buying_stage(db_session, sample_lead, sample_lead.signals, {"fit": "mismatch"})
     assert result["confidence"] == 0.0
