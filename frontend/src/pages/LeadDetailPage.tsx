@@ -1,0 +1,402 @@
+import { useState } from "react"
+import { useParams, Link } from "react-router-dom"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { leadsApi, pipelineApi, approvalsApi } from "@/api/endpoints"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { StageBadge } from "@/components/leads/StageBadge"
+import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
+import { useToast } from "@/components/ui/toast-context"
+import { ArrowLeft, Sparkles, TrendingUp, CheckCircle2, XCircle, Clock, Bot } from "lucide-react"
+import { AnimatePresence, motion } from "motion/react"
+import { cn } from "@/lib/utils"
+
+const AGENT_LABELS: Record<string, string> = {
+  signal_extraction: "Signal Extraction",
+  persona_fit: "Persona Fit",
+  buying_stage_orchestrator: "Buying Stage Orchestrator",
+  outreach_planner: "Outreach Planner",
+  explainability: "Explainability",
+}
+
+const AGENT_COLORS: Record<string, string> = {
+  signal_extraction: "border-l-4 border-l-sky-400",
+  persona_fit: "border-l-4 border-l-violet-400",
+  buying_stage_orchestrator: "border-l-4 border-l-amber-400",
+  outreach_planner: "border-l-4 border-l-emerald-400",
+  explainability: "border-l-4 border-l-rose-400",
+}
+
+function formatDate(iso: string) {
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })
+}
+
+export function LeadDetailPage() {
+  const { leadId } = useParams<{ leadId: string }>()
+  const queryClient = useQueryClient()
+  const { push } = useToast()
+  const [simulatingSignal, setSimulatingSignal] = useState(false)
+
+  const { data: detail, isLoading } = useQuery({
+    queryKey: ["lead-detail", leadId],
+    queryFn: () => leadsApi.detail(leadId!),
+    enabled: !!leadId,
+  })
+
+  const { data: trace } = useQuery({
+    queryKey: ["lead-trace", leadId],
+    queryFn: () => leadsApi.trace(leadId!),
+    enabled: !!leadId,
+  })
+
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["lead-detail", leadId] })
+    queryClient.invalidateQueries({ queryKey: ["lead-trace", leadId] })
+    queryClient.invalidateQueries({ queryKey: ["leads"] })
+    queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] })
+  }
+
+  const runPipeline = useMutation({
+    mutationFn: () => pipelineApi.run([leadId!]),
+    onSuccess: (response) => {
+      invalidateAll()
+      if (response.errors.length > 0) {
+        push({ title: "Pipeline failed", description: response.errors[0].error, variant: "error" })
+      } else {
+        push({ title: "Classification and plan regenerated", variant: "success" })
+      }
+    },
+    onError: (err: Error) => push({ title: "Pipeline run failed", description: err.message, variant: "error" }),
+  })
+
+  const simulateSignal = useMutation({
+    mutationFn: () =>
+      leadsApi.appendSignals(leadId!, [
+        {
+          raw_source: "website",
+          payload: { page: "/pricing", event_type: "pricing_page_visit", simulated: true },
+          occurred_at: new Date().toISOString(),
+        },
+      ]),
+    onSuccess: async () => {
+      setSimulatingSignal(false)
+      push({ title: "New signal appended", description: "Pricing page visit recorded just now", variant: "info" })
+      invalidateAll()
+      await runPipeline.mutateAsync()
+    },
+    onError: (err: Error) => push({ title: "Could not append signal", description: err.message, variant: "error" }),
+  })
+
+  const approvePlan = useMutation({
+    mutationFn: (planId: string) => approvalsApi.actOnPlan(planId, { action: "approve", approved_by: "marketer" }),
+    onSuccess: () => {
+      invalidateAll()
+      push({ title: "Outreach plan approved", variant: "success" })
+    },
+  })
+
+  const rejectPlan = useMutation({
+    mutationFn: (planId: string) => approvalsApi.actOnPlan(planId, { action: "reject", approved_by: "marketer" }),
+    onSuccess: () => {
+      invalidateAll()
+      push({ title: "Outreach plan rejected", variant: "info" })
+    },
+  })
+
+  const approveClassification = useMutation({
+    mutationFn: (classificationId: string) =>
+      approvalsApi.actOnClassification(classificationId, { action: "approve" }),
+    onSuccess: () => {
+      invalidateAll()
+      push({ title: "Classification approved", variant: "success" })
+    },
+  })
+
+  const rejectClassification = useMutation({
+    mutationFn: (classificationId: string) =>
+      approvalsApi.actOnClassification(classificationId, { action: "reject" }),
+    onSuccess: () => {
+      invalidateAll()
+      push({ title: "Classification rejected", variant: "info" })
+    },
+  })
+
+  if (isLoading) return <p className="text-sm text-muted-foreground">Loading lead...</p>
+  if (!detail) return <p className="text-sm text-muted-foreground">Lead not found.</p>
+
+  const { lead, signals, classification_history, latest_plan } = detail
+  const latestClassification = classification_history[0]
+
+  return (
+    <div className="flex flex-col gap-6 pb-16">
+      <Link to="/leads" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground w-fit">
+        <ArrowLeft className="h-3.5 w-3.5" /> Back to pipeline
+      </Link>
+
+      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+        <div>
+          <h1 className="font-heading text-2xl font-bold">{lead.name}</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {lead.title || "Title unknown"} at {lead.company} &middot; {lead.industry || "industry unknown"} &middot; {lead.company_size || "size unknown"}
+          </p>
+        </div>
+        <div className="flex gap-2 shrink-0">
+          <Button
+            variant="outline"
+            onClick={() => {
+              setSimulatingSignal(true)
+              simulateSignal.mutate()
+            }}
+            disabled={simulateSignal.isPending || runPipeline.isPending}
+          >
+            <TrendingUp className="h-4 w-4" />
+            {simulatingSignal && simulateSignal.isPending ? "Simulating..." : "Simulate New Signal"}
+          </Button>
+          <Button variant="accent" onClick={() => runPipeline.mutate()} disabled={runPipeline.isPending}>
+            <Sparkles className="h-4 w-4" />
+            {runPipeline.isPending ? "Running agents..." : "Regenerate Plan"}
+          </Button>
+        </div>
+      </div>
+
+      {latestClassification ? (
+        <Card>
+          <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">
+            <div>
+              <CardTitle>Current Buying Stage</CardTitle>
+              <CardDescription>From the Buying Stage Orchestrator Agent</CardDescription>
+            </div>
+            <div className="flex items-center gap-3">
+              <StageBadge stage={latestClassification.stage} />
+              <ConfidenceMeter confidence={latestClassification.confidence} />
+              {latestClassification.approval_status === "pending_approval" && (
+                <Badge variant="warning">Awaiting Approval</Badge>
+              )}
+              {latestClassification.approval_status === "approved" && <Badge variant="success">Approved</Badge>}
+              {latestClassification.approval_status === "auto_approved" && (
+                <Badge variant="secondary">Auto-approved (high confidence)</Badge>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <p className="text-sm leading-relaxed">{latestClassification.justification}</p>
+            {latestClassification.persona_fit_result?.reasoning && (
+              <div className="rounded-lg bg-secondary/50 p-3 text-sm">
+                <p className="font-semibold mb-1">
+                  Persona fit: <span className="capitalize">{latestClassification.persona_fit_result.fit}</span>
+                </p>
+                <p className="text-muted-foreground">{latestClassification.persona_fit_result.reasoning}</p>
+                {!!latestClassification.persona_fit_result.missing_data?.length && (
+                  <p className="text-xs text-warning mt-1">
+                    Missing data: {latestClassification.persona_fit_result.missing_data.join(", ")}
+                  </p>
+                )}
+              </div>
+            )}
+            {latestClassification.approval_status === "pending_approval" && (
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="default"
+                  onClick={() => approveClassification.mutate(latestClassification.id)}
+                >
+                  <CheckCircle2 className="h-4 w-4" /> Approve Classification
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => rejectClassification.mutate(latestClassification.id)}
+                >
+                  <XCircle className="h-4 w-4" /> Reject
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            No classification yet. Click "Regenerate Plan" to run the agent pipeline for this lead.
+          </CardContent>
+        </Card>
+      )}
+
+      <Tabs defaultValue="plan">
+        <TabsList>
+          <TabsTrigger value="plan">Outreach Plan</TabsTrigger>
+          <TabsTrigger value="signals">Signal History</TabsTrigger>
+          <TabsTrigger value="trace">Agent Trace</TabsTrigger>
+          <TabsTrigger value="history">Classification History</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="plan">
+          {latest_plan ? (
+            <Card>
+              <CardHeader className="flex-row items-center justify-between flex-wrap gap-3">
+                <div>
+                  <CardTitle>Outreach Micro-Plan</CardTitle>
+                  <CardDescription>
+                    {latest_plan.channels.join(", ") || "No channels"} &middot; {latest_plan.touchpoints.length} touchpoint(s)
+                  </CardDescription>
+                </div>
+                <Badge
+                  variant={
+                    latest_plan.status === "approved"
+                      ? "success"
+                      : latest_plan.status === "rejected"
+                        ? "destructive"
+                        : latest_plan.status === "superseded"
+                          ? "outline"
+                          : "warning"
+                  }
+                >
+                  {latest_plan.status.replace("_", " ")}
+                </Badge>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                <ol className="flex flex-col gap-3">
+                  {latest_plan.touchpoints.map((tp, i) => (
+                    <li key={i} className="rounded-lg border border-border p-4">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <Badge variant="secondary">Day {tp.day_offset}</Badge>
+                        <Badge variant="outline" className="capitalize">{tp.channel}</Badge>
+                        <span className="text-sm font-semibold">{tp.content_theme}</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{tp.message_copy}</p>
+                    </li>
+                  ))}
+                </ol>
+                {latest_plan.status === "pending_approval" && (
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => approvePlan.mutate(latest_plan.id)}>
+                      <CheckCircle2 className="h-4 w-4" /> Approve Plan
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => rejectPlan.mutate(latest_plan.id)}>
+                      <XCircle className="h-4 w-4" /> Reject Plan
+                    </Button>
+                  </div>
+                )}
+                {latest_plan.status === "approved" && (
+                  <p className="text-xs text-muted-foreground">
+                    Approved {latest_plan.approved_at ? formatDate(latest_plan.approved_at) : ""} by {latest_plan.approved_by}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <Card>
+              <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                No outreach plan generated yet.
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="signals">
+          <Card>
+            <CardContent className="py-4">
+              <ol className="relative flex flex-col gap-4 before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-px before:bg-border">
+                {signals.length === 0 && (
+                  <p className="text-sm text-muted-foreground">No signals recorded for this lead yet.</p>
+                )}
+                {signals
+                  .slice()
+                  .reverse()
+                  .map((signal) => (
+                    <li key={signal.id} className="relative pl-6">
+                      <span
+                        className={cn(
+                          "absolute left-0 top-1.5 h-3.5 w-3.5 rounded-full border-2 border-background",
+                          signal.intent_stage_hint === "late"
+                            ? "bg-stage-late"
+                            : signal.intent_stage_hint === "mid"
+                              ? "bg-stage-mid"
+                              : "bg-stage-early"
+                        )}
+                      />
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-semibold capitalize">
+                          {signal.event_type.replace(/_/g, " ")}
+                        </span>
+                        <Badge variant="outline" className="capitalize text-[10px]">{signal.raw_source}</Badge>
+                        <span className="text-xs text-muted-foreground">{formatDate(signal.occurred_at)}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-xl">
+                        {JSON.stringify(signal.raw_payload)}
+                      </p>
+                    </li>
+                  ))}
+              </ol>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="trace">
+          <div className="flex flex-col gap-3">
+            <AnimatePresence>
+              {(trace ?? []).map((run, i) => (
+                <motion.div
+                  key={run.id}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.2, delay: i * 0.05 }}
+                >
+                  <Card className={cn(AGENT_COLORS[run.agent_name])}>
+                    <CardHeader className="flex-row items-center justify-between flex-wrap gap-2 pb-2">
+                      <div className="flex items-center gap-2">
+                        <Bot className="h-4 w-4 text-muted-foreground" />
+                        <CardTitle className="text-sm">{AGENT_LABELS[run.agent_name] ?? run.agent_name}</CardTitle>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Clock className="h-3 w-3" /> {formatDate(run.started_at)}
+                        <Badge variant={run.status === "completed" ? "secondary" : "destructive"}>{run.status}</Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="pt-0">
+                      <p className="text-xs text-muted-foreground mb-2">{run.input_summary}</p>
+                      <p className="text-sm leading-relaxed">{run.reasoning}</p>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+            {(!trace || trace.length === 0) && (
+              <Card>
+                <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                  No agent runs yet for this lead.
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="history">
+          <div className="flex flex-col gap-3">
+            {classification_history.length === 0 && (
+              <p className="text-sm text-muted-foreground">No classification history yet.</p>
+            )}
+            {classification_history.map((c) => (
+              <Card key={c.id} className={c.superseded_by_id ? "opacity-60" : ""}>
+                <CardContent className="py-4 flex items-center justify-between gap-4 flex-wrap">
+                  <div className="flex items-center gap-3">
+                    <StageBadge stage={c.stage} />
+                    <ConfidenceMeter confidence={c.confidence} />
+                    {c.superseded_by_id && <Badge variant="outline">Superseded</Badge>}
+                  </div>
+                  <span className="text-xs text-muted-foreground">{formatDate(c.created_at)}</span>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
