@@ -2,6 +2,7 @@ import { useState } from "react"
 import { useParams, Link } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { leadsApi, pipelineApi, approvalsApi } from "@/api/endpoints"
+import { ApiError } from "@/api/client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -45,18 +46,29 @@ export function LeadDetailPage() {
   const { push } = useToast()
   const [simulatingSignal, setSimulatingSignal] = useState(false)
 
-  const { data: detail, isLoading } = useQuery({
+  const {
+    data: detail,
+    isLoading,
+    error: detailError,
+  } = useQuery({
     queryKey: ["lead-detail", leadId],
     queryFn: () => leadsApi.detail(leadId!),
     enabled: !!leadId,
-    retry: false, // a 404 here means "no such lead" — retrying would just delay showing that
+    // a confirmed 404 means "no such lead" and retrying won't help; anything
+    // else (network error, 5xx) is transient and should keep the default retries
+    retry: (failureCount, err) => (err instanceof ApiError && err.status === 404 ? false : failureCount < 3),
   })
+  const isNotFound = detailError instanceof ApiError && detailError.status === 404
 
-  const { data: trace } = useQuery({
+  const {
+    data: trace,
+    error: traceError,
+    isLoading: traceLoading,
+  } = useQuery({
     queryKey: ["lead-trace", leadId],
     queryFn: () => leadsApi.trace(leadId!),
     enabled: !!leadId,
-    retry: false,
+    retry: (failureCount, err) => (err instanceof ApiError && err.status === 404 ? false : failureCount < 3),
   })
 
   const invalidateAll = () => {
@@ -149,7 +161,7 @@ export function LeadDetailPage() {
       </div>
     )
   }
-  if (!detail) {
+  if (isNotFound) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
         <p className="font-heading text-xl">Lead not found</p>
@@ -158,6 +170,19 @@ export function LeadDetailPage() {
         </p>
         <Button asChild variant="outline" className="mt-2">
           <Link to="/leads">Back to pipeline</Link>
+        </Button>
+      </div>
+    )
+  }
+  if (!detail) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
+        <p className="font-heading text-xl">Couldn't load this lead</p>
+        <p className="text-sm text-muted-foreground max-w-sm">
+          {detailError instanceof Error ? detailError.message : "Something went wrong contacting the server."}
+        </p>
+        <Button variant="outline" className="mt-2" onClick={() => queryClient.invalidateQueries({ queryKey: ["lead-detail", leadId] })}>
+          Try again
         </Button>
       </div>
     )
@@ -404,7 +429,29 @@ export function LeadDetailPage() {
                 </motion.div>
               ))}
             </AnimatePresence>
-            {(!trace || trace.length === 0) && (
+            {traceLoading && (
+              <div className="flex flex-col gap-2" aria-busy="true" aria-live="polite">
+                <Skeleton className="h-20 w-full" />
+                <Skeleton className="h-20 w-full" />
+              </div>
+            )}
+            {!traceLoading && traceError && (
+              <Card>
+                <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                  Couldn't load the agent trace.{" "}
+                  {traceError instanceof Error ? traceError.message : "Something went wrong contacting the server."}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-3 block mx-auto"
+                    onClick={() => queryClient.invalidateQueries({ queryKey: ["lead-trace", leadId] })}
+                  >
+                    Try again
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
+            {!traceLoading && !traceError && (!trace || trace.length === 0) && (
               <Card>
                 <CardContent className="py-8 text-center text-sm text-muted-foreground">
                   No agent runs yet for this lead.
