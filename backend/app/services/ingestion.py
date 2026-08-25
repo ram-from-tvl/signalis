@@ -15,7 +15,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.entities import Lead, Signal
+from app.models import Lead, Signal
 
 REQUIRED_CRM_FIELDS = ("name", "company")
 

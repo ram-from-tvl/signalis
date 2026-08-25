@@ -8,8 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.core.llm import LLMError
-from app.models.entities import Lead
-from app.schemas.schemas import (
+from app.models import Lead
+from app.schemas import (
     OutreachPlanOut,
     PipelineRunRequest,
     PipelineRunResponse,

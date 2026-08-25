@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.schemas.schemas import IngestionReportOut
+from app.schemas import IngestionReportOut
 from app.services.ingestion import ingest_crm_csv, ingest_website_events_json
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])

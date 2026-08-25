@@ -5,8 +5,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.entities import AgentRun, Lead, OutreachPlan, StageClassification
-from app.schemas.schemas import DashboardStats
+from app.models import AgentRun, Lead, OutreachPlan, StageClassification
+from app.schemas import DashboardStats
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 

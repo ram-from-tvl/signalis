@@ -16,7 +16,7 @@ from app.agents.common import finish_run, run_agent_reasoning, start_run
 from app.core.config import get_settings
 from app.core.llm import LLMError
 from app.core.sandbox import run_signal_scoring
-from app.models.entities import Lead, Signal
+from app.models import Lead, Signal
 
 SYSTEM_INSTRUCTION = """You are the Buying Stage Orchestrator Agent inside a B2B sales
 intelligence system. You receive a lead's classified interaction signals (each with an

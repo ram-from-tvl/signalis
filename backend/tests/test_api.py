@@ -113,7 +113,7 @@ def test_trigger_pipeline_for_unknown_lead_returns_empty_results(client):
 
 
 def test_approve_plan_updates_status(client, sample_lead, db_session):
-    from app.models.entities import OutreachPlan, StageClassification
+    from app.models import OutreachPlan, StageClassification
 
     classification = StageClassification(
         lead_id=sample_lead.id, stage="mid", confidence=0.7, justification="test"
@@ -156,7 +156,7 @@ def test_dashboard_latency_excludes_pipeline_wide_agent_runs(client, db_session)
     since it isn't a per-lead call and would skew the number."""
     import datetime
 
-    from app.models.entities import AgentRun
+    from app.models import AgentRun
 
     fast_start = datetime.datetime(2026, 1, 1, 0, 0, 0)
     fast_end = fast_start + datetime.timedelta(seconds=2)

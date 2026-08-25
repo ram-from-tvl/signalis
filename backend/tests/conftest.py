@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.deps import get_db
 from app.db.base import Base
 from app.main import app
-from app.models.entities import Lead, Signal
+from app.models import Lead, Signal
 
 TEST_DATABASE_URL = "sqlite:///:memory:"
 

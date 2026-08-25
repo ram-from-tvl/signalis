@@ -5,8 +5,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.entities import Solution
-from app.schemas.schemas import SolutionCreate, SolutionOut
+from app.models import Solution
+from app.schemas import SolutionCreate, SolutionOut
 
 router = APIRouter(prefix="/api/solutions", tags=["solutions"])
 

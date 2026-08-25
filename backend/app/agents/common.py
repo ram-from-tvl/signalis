@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.config import get_settings
 from app.core.llm import LLMError, generate_json
 from app.core.trueforge import TrueForgeError, ensure_agent, run_turn
-from app.models.entities import AgentRun
+from app.models import AgentRun
 
 logger = logging.getLogger("signalis.agents")
 

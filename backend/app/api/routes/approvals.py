@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models.entities import ApprovalEvent, OutreachPlan, StageClassification
-from app.schemas.schemas import ApprovalActionRequest, OutreachPlanOut, StageClassificationOut
+from app.models import ApprovalEvent, OutreachPlan, StageClassification
+from app.schemas import ApprovalActionRequest, OutreachPlanOut, StageClassificationOut
 
 router = APIRouter(prefix="/api/approvals", tags=["approvals"])
 

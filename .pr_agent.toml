@@ -1,0 +1,56 @@
+[github_app]
+# Run the full agentic review and description automatically on every PR
+# open/reopen/ready-for-review — no manual command needed to get baseline
+# coverage on any pull request in this repo.
+pr_commands = [
+    "/agentic_describe",
+    "/agentic_review",
+    "/generate_labels",
+]
+
+# Re-run the review on every new commit so feedback always reflects the
+# latest pushed code rather than going stale after the first round.
+handle_push_trigger = true
+push_commands = [
+    "/agentic_review",
+]
+
+[review_agent]
+# Surface findings both as a summary comment and as inline comments on the
+# exact lines they concern.
+comments_location_policy = "both"
+
+# Inline-comment on medium severity and above; low-severity nitpicks stay in
+# the summary only, to keep the diff readable.
+inline_comments_severity_threshold = 2
+
+issues_user_guidelines = """
+- Flag any code path where an error from a dependency (HTTP client, DB
+  session, LLM call) is silently swallowed or coerced into a generic/empty
+  success state instead of surfacing distinctly to the caller or UI.
+- Flag React Query (or any cache/fetch layer) usage where a loading guard
+  does not also handle the error case, since this tends to manifest as an
+  infinite loading spinner in production rather than a visible failure.
+- Flag SQLAlchemy models, Pydantic schemas, or TypeScript types that
+  duplicate the same shape without a shared source of truth, since this
+  repo has previously drifted between backend schemas and hand-written
+  frontend types.
+- Flag new CSS rules that could be overridden by (or silently override)
+  Tailwind utility classes due to source order or missing @layer scoping.
+- Flag secrets, API keys, or credentials committed directly instead of
+  read from environment/settings.
+"""
+
+compliance_user_guidelines = """
+- Every new or modified SQLAlchemy model must stay consistent with
+  docs/DATA_SCHEMA.md's append-only-history pattern for classification and
+  outreach-plan-like tables (new rows on state change, not in-place
+  mutation of history), unless the PR description explicitly says
+  otherwise.
+- Every new backend route must have a corresponding Pydantic response
+  model (no bare dict returns) and be registered through
+  backend/app/api/router.py rather than added ad hoc to app/main.py.
+- Every new frontend page or data-fetching hook must handle loading,
+  error, and empty states distinctly — matching the pattern already
+  established in DashboardPage.tsx and LeadDetailPage.tsx.
+"""

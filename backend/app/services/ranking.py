@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.prioritization import run_prioritization
-from app.models.entities import Lead, PipelineRanking, StageClassification
+from app.models import Lead, PipelineRanking, StageClassification
 
 
 def _current_classifications(db: Session) -> list[tuple[Lead, StageClassification]]:

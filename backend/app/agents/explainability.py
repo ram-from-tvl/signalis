@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.agents.common import finish_run, run_agent_reasoning, start_run
 from app.core.config import get_settings
 from app.core.llm import LLMError
-from app.models.entities import Lead
+from app.models import Lead
 
 SYSTEM_INSTRUCTION = """You are the Explainability Agent inside a B2B sales intelligence system.
 You are given the structured outputs of four other agents that just ran, in order, for one
