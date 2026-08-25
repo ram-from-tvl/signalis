@@ -6,6 +6,7 @@ import type { Stage } from "@/types/api"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -100,7 +101,22 @@ export function LeadPipelinePage() {
         </Select>
       </div>
 
-      {isLoading && <p className="text-sm text-muted-foreground">Loading leads...</p>}
+      {isLoading && (
+        <div className="grid gap-3" aria-busy="true" aria-live="polite">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Card key={i}>
+              <CardContent className="py-4 flex items-center gap-6">
+                <div className="flex-1 min-w-0">
+                  <Skeleton className="h-4 w-40 mb-2" />
+                  <Skeleton className="h-3 w-56" />
+                </div>
+                <Skeleton className="h-6 w-16" />
+                <Skeleton className="h-1.5 w-20" />
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {!isLoading && filteredSorted.length === 0 && (
         <Card>
