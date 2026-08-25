@@ -163,9 +163,11 @@ export interface RankedLeadEntry {
   lead_id: string
   rank: number
   reasoning: string
-  lead: Lead | null
-  stage: Stage | null
-  confidence: number | null
+  name: string
+  company: string
+  title: string
+  stage: Stage
+  confidence: number
 }
 
 export interface PipelineRanking {

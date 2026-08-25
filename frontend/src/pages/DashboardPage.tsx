@@ -244,17 +244,15 @@ export function DashboardPage() {
                         {entry.rank}
                       </span>
                       <div className="flex-1 min-w-0">
-                        <p className="font-semibold truncate">{entry.lead?.name ?? entry.lead_id}</p>
-                        {entry.lead && (
-                          <p className="text-xs text-muted-foreground truncate">
-                            {entry.lead.title || "Title unknown"} at {entry.lead.company}
-                          </p>
-                        )}
+                        <p className="font-semibold truncate">{entry.name}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {entry.title || "Title unknown"} at {entry.company}
+                        </p>
                         <p className="text-xs text-muted-foreground mt-1">{entry.reasoning}</p>
                       </div>
                       <div className="flex items-center gap-3 shrink-0">
-                        {entry.stage && <StageBadge stage={entry.stage} />}
-                        {entry.confidence != null && <ConfidenceMeter confidence={entry.confidence} showLabel={false} />}
+                        <StageBadge stage={entry.stage} />
+                        <ConfidenceMeter confidence={entry.confidence} showLabel={false} />
                       </div>
                     </Link>
                   </li>
