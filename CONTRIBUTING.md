@@ -21,8 +21,7 @@ backend, frontend). The short version once your `.env` is in place:
 # Backend
 cd backend
 python -m venv venv && source venv/bin/activate
-pip install fastapi "uvicorn[standard]" sqlalchemy pydantic pydantic-settings \
-  python-dotenv python-multipart langgraph google-genai daytona mcp pytest httpx ruff
+pip install -e ".[dev]"
 uvicorn app.main:app --reload
 
 # Frontend, in a second terminal
