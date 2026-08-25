@@ -16,13 +16,12 @@ from app.models.entities import Lead, PipelineRanking, StageClassification
 
 
 def _current_classifications(db: Session) -> list[tuple[Lead, StageClassification]]:
-    classifications = db.execute(
-        select(StageClassification).where(StageClassification.superseded_by_id.is_(None))
-    ).scalars().all()
-    leads_by_id = {lead.id: lead for lead in db.execute(select(Lead)).scalars().all()}
-    return [
-        (leads_by_id[c.lead_id], c) for c in classifications if c.lead_id in leads_by_id
-    ]
+    rows = db.execute(
+        select(Lead, StageClassification)
+        .join(StageClassification, StageClassification.lead_id == Lead.id)
+        .where(StageClassification.superseded_by_id.is_(None))
+    ).all()
+    return [(lead, classification) for lead, classification in rows]
 
 
 def run_pipeline_ranking(db: Session) -> PipelineRanking:
