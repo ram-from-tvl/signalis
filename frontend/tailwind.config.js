@@ -10,8 +10,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        heading: ["'Space Grotesk'", "system-ui", "sans-serif"],
-        body: ["'Manrope'", "system-ui", "sans-serif"],
+        heading: ["'Instrument Serif'", "Georgia", "serif"],
+        body: ["'Instrument Sans'", "system-ui", "sans-serif"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -72,9 +72,9 @@ export default {
         xl: "calc(var(--radius) + 4px)",
       },
       boxShadow: {
-        subtle: "0 1px 2px 0 hsl(220 40% 8% / 0.06)",
-        card: "0 1px 3px 0 hsl(220 40% 8% / 0.08), 0 1px 2px -1px hsl(220 40% 8% / 0.06)",
-        raised: "0 4px 16px -4px hsl(220 40% 8% / 0.14), 0 2px 6px -2px hsl(220 40% 8% / 0.08)",
+        subtle: "0 1px 2px 0 hsl(160 25% 10% / 0.05)",
+        card: "0 1px 3px 0 hsl(160 25% 10% / 0.06), 0 1px 2px -1px hsl(160 25% 10% / 0.05)",
+        raised: "0 4px 16px -4px hsl(160 25% 10% / 0.12), 0 2px 6px -2px hsl(160 25% 10% / 0.06)",
       },
       keyframes: {
         "fade-in": {
