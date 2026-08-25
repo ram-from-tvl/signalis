@@ -1,0 +1,32 @@
+IMPLEMENTATION_PLAN.md
+challenge.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env
+.env
+.env.local
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# DB
+*.db
+*.sqlite3
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
