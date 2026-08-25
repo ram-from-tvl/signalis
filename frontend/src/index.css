@@ -120,17 +120,19 @@
   border-color: hsl(var(--border));
 }
 
-body {
-  background-color: hsl(var(--background));
-  color: hsl(var(--foreground));
-  font-family: 'Instrument Sans', system-ui, sans-serif;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-}
+@layer base {
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
 
-h1, h2, h3, h4, h5, h6, .font-heading {
-  font-family: 'Instrument Serif', Georgia, serif;
-  font-weight: 400;
-  letter-spacing: -0.005em;
+  h1, h2, h3, h4, h5, h6, .font-heading {
+    font-family: 'Instrument Serif', Georgia, serif;
+    font-weight: 400;
+    letter-spacing: -0.005em;
+  }
 }
 
 ::selection {

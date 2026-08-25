@@ -56,7 +56,11 @@ export function DashboardPage() {
   const queryClient = useQueryClient()
   const { push } = useToast()
 
-  const { data: stats, isLoading } = useQuery({
+  const {
+    data: stats,
+    isLoading,
+    error: statsError,
+  } = useQuery({
     queryKey: ["dashboard-stats"],
     queryFn: dashboardApi.stats,
   })
@@ -75,7 +79,7 @@ export function DashboardPage() {
     onError: (err: Error) => push({ title: "Ranking failed", description: err.message, variant: "error" }),
   })
 
-  if (isLoading || !stats) {
+  if (isLoading) {
     return (
       <div className="flex flex-col gap-6 pb-12" aria-busy="true" aria-live="polite">
         <div>
@@ -105,6 +109,24 @@ export function DashboardPage() {
             </CardContent>
           </Card>
         </div>
+      </div>
+    )
+  }
+
+  if (!stats) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
+        <p className="font-heading text-xl">Couldn't load the dashboard</p>
+        <p className="text-sm text-muted-foreground max-w-sm">
+          {statsError instanceof Error ? statsError.message : "Something went wrong contacting the server."}
+        </p>
+        <Button
+          variant="outline"
+          className="mt-2"
+          onClick={() => queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] })}
+        >
+          Try again
+        </Button>
       </div>
     )
   }
