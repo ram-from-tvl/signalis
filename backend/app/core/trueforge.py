@@ -72,8 +72,11 @@ def _update_agent(name: str, manifest: dict[str, Any]) -> None:
     try:
         get_resp = httpx.get(f"{_base_url()}/api/v1/agents", timeout=15.0)
         get_resp.raise_for_status()
-        agents = get_resp.json()["data"]
-        match = next((a for a in agents if a["name"] == name), None)
+        body = get_resp.json()
+        agents = body["data"]
+        if not isinstance(agents, list):
+            raise TrueForgeError(f"TrueForge agent list response had a non-list 'data' field: {body!r}")
+        match = next((a for a in agents if isinstance(a, dict) and a.get("name") == name), None)
         if match is None:
             raise TrueForgeError(f"Agent {name} reported as already existing but not found in agent list")
         agent_id = match["id"]
@@ -85,7 +88,7 @@ def _update_agent(name: str, manifest: dict[str, Any]) -> None:
         )
         put_resp.raise_for_status()
         logger.info("Updated TrueForge agent %s manifest", name)
-    except (httpx.HTTPError, KeyError) as exc:
+    except (httpx.HTTPError, KeyError, ValueError) as exc:
         raise TrueForgeError(f"Failed to update TrueForge agent {name}: {exc}") from exc
 
 

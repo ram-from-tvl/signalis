@@ -188,6 +188,42 @@ def test_ensure_agent_updates_manifest_when_agent_already_exists():
     assert {"name": "signalis-research", "enable_tools": ["@all"]} in updated_manifest["mcp_servers"]
 
 
+def test_ensure_agent_update_wraps_malformed_agent_list_as_trueforge_error():
+    """If the GET /api/v1/agents response has a non-list 'data' field (a
+    malformed dependency response), _update_agent must raise TrueForgeError
+    so run_agent_reasoning's fallback path can catch it, instead of letting
+    a raw TypeError/ValueError escape and kill the pipeline step."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
+
+    malformed_list_response = MagicMock()
+    malformed_list_response.raise_for_status = MagicMock()
+    malformed_list_response.json.return_value = {"data": "not-a-list"}
+
+    with patch("httpx.post", return_value=create_conflict), \
+        patch("httpx.get", return_value=malformed_list_response):
+        with pytest.raises(TrueForgeError):
+            ensure_agent("signalis-persona-fit", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+
+def test_ensure_agent_update_wraps_invalid_json_as_trueforge_error():
+    """Invalid JSON in the agent-list response (json.JSONDecodeError, a
+    ValueError subclass) must also be wrapped as TrueForgeError."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
+
+    invalid_json_response = MagicMock()
+    invalid_json_response.raise_for_status = MagicMock()
+    invalid_json_response.json.side_effect = json.JSONDecodeError("bad json", "doc", 0)
+
+    with patch("httpx.post", return_value=create_conflict), \
+        patch("httpx.get", return_value=invalid_json_response):
+        with pytest.raises(TrueForgeError):
+            ensure_agent("signalis-persona-fit", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+
 def test_ensure_agent_raises_on_genuine_error():
     fake_response = MagicMock()
     fake_response.status_code = 500
