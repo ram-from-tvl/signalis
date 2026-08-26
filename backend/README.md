@@ -38,6 +38,10 @@ app/
     enrichment_server.py
                  Remote MCP server exposing firmographic enrichment tools,
                  called by the Persona Fit agent through TrueForge.
+    research_server.py
+                 Remote MCP server exposing search_company_news, a live
+                 Tavily-backed web-research tool, called by the Persona Fit
+                 agent through TrueForge alongside the enrichment tools.
   models/        SQLAlchemy ORM models, one module per domain entity,
                  re-exported from __init__.py.
   schemas/       Pydantic request/response schemas, one module per domain,

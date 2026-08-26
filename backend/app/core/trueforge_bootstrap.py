@@ -100,6 +100,20 @@ def main() -> None:
         },
     )
 
+    print("Registering the research MCP server...")
+    _put_or_post(
+        "PUT",
+        f"{base}/api/v1/settings/mcp-servers",
+        {
+            "manifest": {
+                "type": "remote",
+                "name": "signalis-research",
+                "url": "http://127.0.0.1:8792/mcp",
+                "description": "Live web-research tool: recent company news, funding, and hiring signals via Tavily",
+            }
+        },
+    )
+
     print("Registering the outreach copywriting style guide skill...")
     # Skills only support POST-create (409 on a name that already exists),
     # not the bulk PUT-upsert shape the providers/MCP server above use — see

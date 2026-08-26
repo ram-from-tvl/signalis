@@ -14,10 +14,31 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.llm import LLMError, generate_json
-from app.core.trueforge import TrueForgeError, ensure_agent, run_turn
+from app.core.trueforge import PendingToolApproval, TrueForgeError, ensure_agent, resume_turn, run_turn
 from app.models import AgentRun
 
 logger = logging.getLogger("signalis.agents")
+
+
+class AgentPausedForToolApproval(Exception):
+    """Raised by run_agent_reasoning when a TrueForge turn paused on a
+    require_approval_for_tools gate instead of producing a final answer.
+
+    This is distinct from LLMError (a genuine failure) and a normal dict
+    return (a genuine success) — callers that don't expect a pause (every
+    agent except Persona Fit, at this build's scope) will simply never
+    trigger it, since none of their MCP server attachments set
+    require_approval_for_tools. Persona Fit's caller (app.services.pipeline)
+    catches this specifically to persist a ToolApprovalRequest and surface a
+    "paused, awaiting approval" outcome instead of crashing the pipeline run.
+    """
+
+    def __init__(self, pending: list[PendingToolApproval]):
+        self.pending = pending
+        super().__init__(
+            f"Turn paused awaiting approval for {len(pending)} tool call(s): "
+            f"{[p.tool_name for p in pending]}"
+        )
 
 
 def start_run(db: Session, *, lead_id: str | None, agent_name: str, input_summary: str) -> AgentRun:
@@ -82,6 +103,14 @@ def run_agent_reasoning(
     fallback path, so a call whose craft guidance now lives entirely in a
     TrueForge skill doesn't silently lose that guidance when TrueForge is
     unavailable — mirrors the existing tool-stripping precedent below.
+
+    Raises AgentPausedForToolApproval instead of returning if the TrueForge
+    turn paused on a require_approval_for_tools gate — this only happens for
+    agents whose mcp_servers config actually sets that field (Persona Fit,
+    at this build's scope). No fallback happens in that case: a pause is not
+    a transport failure, so it must not be silently retried through the
+    tool-less direct LLM path, which would just skip the approval gate
+    entirely.
     """
     settings = get_settings()
     if settings.trueforge_enabled:
@@ -96,7 +125,10 @@ def run_agent_reasoning(
                 mcp_servers=mcp_servers,
                 skills=skills,
             )
-            return run_turn(trueforge_agent_name, prompt)
+            result = run_turn(trueforge_agent_name, prompt)
+            if isinstance(result, list):
+                raise AgentPausedForToolApproval(result)
+            return result
         except TrueForgeError as exc:
             logger.warning(
                 "TrueForge call failed for %s, falling back to direct LLM call: %s",
@@ -142,3 +174,41 @@ def run_agent_reasoning(
         )
     except LLMError as exc:
         raise LLMError(f"Agent {trueforge_agent_name} reasoning failed: {exc}") from exc
+
+
+def resume_agent_reasoning(
+    *,
+    trueforge_agent_name: str,
+    session_id: str,
+    thread_id: str,
+    tool_call_id: str,
+    approve: bool,
+    deny_reason: str | None = None,
+) -> dict[str, Any]:
+    """Resumes a TrueForge turn previously paused by run_agent_reasoning
+    raising AgentPausedForToolApproval, after a human has approved or
+    rejected the pending tool call.
+
+    Only handles the case where the resumed turn reaches a final answer or
+    a genuine TrueForge error. If a further tool call in the same turn also
+    needs approval (multiple gated tool calls back to back), this raises
+    AgentPausedForToolApproval again so the caller can persist a new pending
+    request rather than silently dropping it — the caller (the tool-approval
+    endpoint) is expected to treat that the same way it treats the first
+    pause.
+    """
+    try:
+        result = resume_turn(
+            trueforge_agent_name,
+            session_id=session_id,
+            thread_id=thread_id,
+            tool_call_id=tool_call_id,
+            approve=approve,
+            deny_reason=deny_reason,
+        )
+    except TrueForgeError as exc:
+        raise TrueForgeError(f"Failed to resume agent {trueforge_agent_name}: {exc}") from exc
+
+    if isinstance(result, list):
+        raise AgentPausedForToolApproval(result)
+    return result
