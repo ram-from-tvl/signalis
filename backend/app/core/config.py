@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     daytona_api_key: str = ""
     daytona_api_url: str = "https://app.daytona.io/api"
     daytona_sandbox_id: str = ""
+    tavily_api_key: str = ""
     trueforge_url: str = "http://localhost:8790"
     trueforge_enabled: bool = True
     trueforge_model: str = "google-gemini/gemini-2-5-flash"

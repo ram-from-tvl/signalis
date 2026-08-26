@@ -15,23 +15,33 @@ from app.core.config import get_settings
 from app.core.llm import LLMError
 from app.models import Lead, Persona, Solution
 
-_ENRICHMENT_MCP_SERVER = [
+_MCP_SERVERS = [
     {
         "name": "signalis-enrichment",
         "enable_tools": ["@all"],
         "require_approval_for_tools": [],
-    }
+    },
+    {
+        "name": "signalis-research",
+        "enable_tools": ["@all"],
+        "require_approval_for_tools": [],
+    },
 ]
 
 SYSTEM_INSTRUCTION = """You are the Persona Fit Agent inside a B2B sales intelligence system.
 You are given a lead's firmographic profile, a target persona definition, and a solution's ideal
 customer profile (ICP) filters. Before deciding fit, use the classify_company_industry and
 estimate_company_size_band tools to enrich the lead's company data whenever the lead's industry
-or company size is missing or you want to verify a stated value. Decide whether the lead is a
-full_fit, partial_fit, or mismatch against the persona and ICP, and explain your reasoning in
-plain, specific language a sales rep could sanity-check in five seconds. Always call out any lead
-fields that are missing or blank and explain how that limited your confidence in the assessment.
-Be honest about ambiguity rather than forcing a confident-sounding answer when data is thin."""
+or company size is missing or you want to verify a stated value. You also have a
+search_company_news tool that returns real, current web results (recent news, funding, hiring
+signals) about the lead's company; call it when that kind of external context would meaningfully
+sharpen your fit assessment (for example, a recent funding round or hiring surge that speaks to
+company size or growth stage) — it is not mandatory on every lead, since recent news is not
+always relevant or available. Decide whether the lead is a full_fit, partial_fit, or mismatch
+against the persona and ICP, and explain your reasoning in plain, specific language a sales rep
+could sanity-check in five seconds. Always call out any lead fields that are missing or blank and
+explain how that limited your confidence in the assessment. Be honest about ambiguity rather than
+forcing a confident-sounding answer when data is thin."""
 
 
 def run_persona_fit(
@@ -81,7 +91,7 @@ def run_persona_fit(
             prompt=prompt,
             response_schema=schema,
             temperature=0.2,
-            mcp_servers=_ENRICHMENT_MCP_SERVER,
+            mcp_servers=_MCP_SERVERS,
         )
     except LLMError as exc:
         finish_run(db, run, output={"error": str(exc)}, reasoning=str(exc), status="failed")

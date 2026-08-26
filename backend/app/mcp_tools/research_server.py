@@ -1,0 +1,122 @@
+"""Remote MCP server exposing live web-research tools.
+
+Run standalone (`python -m app.mcp_tools.research_server`) so TrueForge can
+reach it as a `remote` MCP server over HTTP, the same way
+`enrichment_server.py` is reached. Where the enrichment server stands in for
+a paid firmographic data vendor with an offline heuristic, this server calls
+a genuine third-party search API (Tavily, https://tavily.com) so an agent
+can ground its reasoning in real, current information about a company
+(funding news, hiring signals, product launches) rather than only the
+static CRM/ingested data already in this app's database.
+"""
+from __future__ import annotations
+
+import logging
+
+import httpx
+from mcp.server import MCPServer
+
+from app.core.config import get_settings
+
+logger = logging.getLogger("signalis.research_server")
+
+server = MCPServer(
+    name="signalis-research",
+    instructions="Live web-research tools for grounding buying-signal analysis in current external context.",
+)
+
+_TAVILY_SEARCH_URL = "https://api.tavily.com/search"
+_MAX_RESULTS = 5
+_REQUEST_TIMEOUT_SECONDS = 10.0
+
+
+@server.tool()
+def search_company_news(company_name: str, focus: str | None = None) -> dict:
+    """Search the live web for recent news about a company.
+
+    Calls the Tavily search API for recent news, funding, and hiring signals
+    about `company_name` (optionally narrowed by `focus`, e.g. "funding" or
+    "hiring"). This is a genuine external tool call, not an in-process
+    heuristic: it reaches a real third-party search provider so an agent can
+    ground its reasoning in current information rather than only the static
+    CRM/ingested data already in this app.
+
+    Never raises: if TAVILY_API_KEY is not configured, or the call fails or
+    times out, this returns a normalized "not queried" shape instead of
+    crashing the agent turn — matching this codebase's existing fallback
+    philosophy for external dependencies (see app/core/sandbox.py and
+    app/core/llm.py).
+    """
+    settings = get_settings()
+    if not settings.tavily_api_key:
+        return {
+            "company_name": company_name,
+            "results": [],
+            "queried": False,
+            "reason": "TAVILY_API_KEY is not configured",
+        }
+
+    query = f"recent news, funding, hiring for {company_name}"
+    if focus:
+        query = f"{query} (focus: {focus})"
+
+    try:
+        response = httpx.post(
+            _TAVILY_SEARCH_URL,
+            json={
+                "api_key": settings.tavily_api_key,
+                "query": query,
+                "search_depth": "basic",
+                "max_results": _MAX_RESULTS,
+            },
+            timeout=_REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except httpx.HTTPError as exc:
+        logger.warning("Tavily search call failed for %r: %s", company_name, exc)
+        return {
+            "company_name": company_name,
+            "results": [],
+            "queried": False,
+            "reason": f"Tavily request failed: {exc}",
+        }
+    except ValueError as exc:  # response.json() decode failure
+        logger.warning("Tavily search returned a non-JSON response for %r: %s", company_name, exc)
+        return {
+            "company_name": company_name,
+            "results": [],
+            "queried": False,
+            "reason": f"Tavily returned a non-JSON response: {exc}",
+        }
+
+    try:
+        raw_results = data.get("results", [])
+        results = [
+            {
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "snippet": item.get("content", ""),
+            }
+            for item in raw_results[:_MAX_RESULTS]
+        ]
+    except (AttributeError, TypeError) as exc:
+        logger.warning("Tavily search returned an unexpected response shape for %r: %s", company_name, exc)
+        return {
+            "company_name": company_name,
+            "results": [],
+            "queried": False,
+            "reason": f"Tavily returned an unexpected response shape: {exc}",
+        }
+
+    return {"company_name": company_name, "results": results, "queried": True}
+
+
+def create_app():
+    return server.streamable_http_app()
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(create_app(), host="127.0.0.1", port=8792)
