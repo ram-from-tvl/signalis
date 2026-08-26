@@ -16,10 +16,22 @@ from app.api.routes import (
     pipeline,
     ranking,
     solutions,
+    tool_approvals,
     uploads,
 )
 
 api_router = APIRouter()
 
-for module in (personas, solutions, uploads, leads, pipeline, approvals, dashboard, ranking, agent_followups):
+for module in (
+    personas,
+    solutions,
+    uploads,
+    leads,
+    pipeline,
+    approvals,
+    tool_approvals,
+    dashboard,
+    ranking,
+    agent_followups,
+):
     api_router.include_router(module.router)

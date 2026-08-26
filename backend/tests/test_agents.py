@@ -101,6 +101,75 @@ def test_persona_fit_handles_missing_persona_and_solution(db_session, sample_lea
             "session-jkl",
         ),
     ):
-        result = run_persona_fit(db_session, sample_lead, None, None)
+        result, agent_run_id = run_persona_fit(db_session, sample_lead, None, None)
     assert result["fit"] == "partial_fit"
     assert "missing_data" in result
+    assert agent_run_id is not None
+
+
+def test_run_persona_fit_reuses_completed_run_instead_of_hitting_gate_again(db_session, sample_lead):
+    """Regression test for "Regeneration repeats approval gate": once a
+    Persona Fit AgentRun has completed (e.g. via resume_persona_fit after a
+    marketer approved a paused tool call) and its result hasn't been
+    consumed by any StageClassification yet, a subsequent run_persona_fit
+    call (as "Regenerate Plan" triggers via the graph) must reuse that
+    result instead of starting a brand new TrueForge turn and re-hitting the
+    same require_approval_for_tools gate."""
+    from app.agents.common import finish_run, start_run
+
+    completed_run = start_run(
+        db_session, lead_id=sample_lead.id, agent_name="persona_fit", input_summary="prior run"
+    )
+    finish_run(
+        db_session,
+        completed_run,
+        output={"fit": "full_fit", "reasoning": "already approved", "missing_data": []},
+        reasoning="already approved",
+    )
+
+    with patch("app.agents.persona_fit.run_agent_reasoning") as mock_reasoning:
+        result, agent_run_id = run_persona_fit(db_session, sample_lead, None, None)
+
+    mock_reasoning.assert_not_called()  # no new TrueForge turn started
+    assert agent_run_id == completed_run.id
+    assert result["fit"] == "full_fit"
+    assert result["reasoning"] == "already approved"
+
+
+def test_run_persona_fit_starts_fresh_once_prior_result_is_consumed(db_session, sample_lead):
+    """The reuse in the previous test must not be permanent: once a
+    StageClassification records based_on_agent_run_id for the completed run,
+    the *next* run_persona_fit call (a later, unrelated Regenerate Plan) must
+    start a fresh TrueForge turn rather than reusing stale output forever."""
+    from app.agents.common import finish_run, start_run
+    from app.models import StageClassification
+
+    completed_run = start_run(
+        db_session, lead_id=sample_lead.id, agent_name="persona_fit", input_summary="prior run"
+    )
+    finish_run(
+        db_session,
+        completed_run,
+        output={"fit": "full_fit", "reasoning": "already approved", "missing_data": []},
+        reasoning="already approved",
+    )
+    classification = StageClassification(
+        lead_id=sample_lead.id,
+        stage="mid",
+        confidence=0.9,
+        justification="test",
+        persona_fit_result={"fit": "full_fit"},
+        based_on_agent_run_id=completed_run.id,
+    )
+    db_session.add(classification)
+    db_session.commit()
+
+    with patch(
+        "app.agents.persona_fit.run_agent_reasoning",
+        return_value=({"fit": "mismatch", "reasoning": "fresh run", "missing_data": []}, "sess-fresh"),
+    ) as mock_reasoning:
+        result, agent_run_id = run_persona_fit(db_session, sample_lead, None, None)
+
+    mock_reasoning.assert_called_once()
+    assert agent_run_id != completed_run.id
+    assert result["fit"] == "mismatch"

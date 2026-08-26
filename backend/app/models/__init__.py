@@ -5,6 +5,7 @@ from app.models.lead import Lead, Signal
 from app.models.persona import Persona
 from app.models.ranking import PipelineRanking
 from app.models.solution import Solution
+from app.models.tool_approval import ToolApprovalRequest
 
 __all__ = [
     "Persona",
@@ -17,4 +18,5 @@ __all__ = [
     "OutreachPlan",
     "ApprovalEvent",
     "PipelineRanking",
+    "ToolApprovalRequest",
 ]

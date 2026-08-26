@@ -100,6 +100,20 @@ def main() -> None:
         },
     )
 
+    print("Registering the research MCP server...")
+    _put_or_post(
+        "PUT",
+        f"{base}/api/v1/settings/mcp-servers",
+        {
+            "manifest": {
+                "type": "remote",
+                "name": "signalis-research",
+                "url": "http://127.0.0.1:8792/mcp",
+                "description": "Live web-research tool: recent company news, funding, and hiring signals via Tavily",
+            }
+        },
+    )
+
     print("Done. Individual agents register automatically on first pipeline run.")
 
 
