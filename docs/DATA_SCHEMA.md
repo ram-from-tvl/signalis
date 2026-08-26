@@ -2,9 +2,18 @@
 
 Signalis persists all state in a single SQLite database (`backend/signalis.db`),
 created automatically from the SQLAlchemy models on application startup. There
-are no migrations in this build: the schema is created via
-`Base.metadata.create_all`, which is sufficient for a system with no
-production upgrade history yet. Tables that represent a decision the system
+is still no migration framework in this build: new tables are created via
+`Base.metadata.create_all`, sufficient for every schema change so far except
+one — a nullable column added to an already-existing table
+(`agent_runs.trueforge_session_id`), which `create_all` does not retrofit
+onto existing rows. That one case is handled by a small, purpose-built
+additive-only patcher, `app/db/migrations.py::run_startup_migrations`, run
+right after `create_all` on every startup: it inspects each table's current
+columns and issues `ALTER TABLE ... ADD COLUMN` only for ones genuinely
+missing, so it is a no-op on a fresh database (where `create_all` already
+created the column) and idempotent on repeated runs. This was judged the
+right scope for a single-column addition; see DECISIONS.md for why Alembic
+was not pulled in for it. Tables that represent a decision the system
 makes (stage classifications, outreach plans) are append-only history tables
 rather than rows that get overwritten in place, so the full reasoning history
 behind any current state is always inspectable.
@@ -95,6 +104,24 @@ The audit trail backing the agent trace view. One row per agent invocation.
 | status | string | `running` / `completed` / `failed` |
 | started_at | datetime | |
 | completed_at | datetime, nullable | used to compute real agent latency for the dashboard |
+| trueforge_session_id | string, nullable | the TrueForge session that produced this run's reasoning; null when the direct-Gemini/Hugging-Face fallback path was used instead (that path never creates a TrueForge session). When present, a marketer's follow-up question can be answered as a real continuation turn on this exact session — see `agent_run_followups` below and DECISIONS.md. Added via an additive `ALTER TABLE` in `app/db/migrations.py` since this project has no migration framework and the column was added to an already-existing table. |
+
+### agent_run_followups
+
+A marketer's follow-up Q&A exchanges against one `agent_runs` row's
+reasoning, answered as a genuine continuation turn on that run's
+`trueforge_session_id`. Append-only, same philosophy as
+`stage_classifications`/`outreach_plans`: every question/answer pair is its
+own row, so a marketer's full follow-up history for a trace entry survives
+a page reload.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | string (uuid hex) | primary key |
+| agent_run_id | FK -> agent_runs.id | the run whose TrueForge session this question was asked against |
+| question | text | the marketer's free-text question |
+| answer | text | the model's free-text answer, from a turn run on the same TrueForge session as the original run |
+| created_at | datetime | |
 
 ### stage_classifications
 
