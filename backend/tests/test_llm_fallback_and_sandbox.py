@@ -11,7 +11,7 @@ import pytest
 from app.agents.common import run_agent_reasoning
 from app.core.llm import LLMError, generate_json
 from app.core.sandbox import run_signal_scoring
-from app.core.trueforge import TrueForgeError, ensure_agent
+from app.core.trueforge import TrueForgeError, ensure_agent, ensure_skill
 
 SCHEMA = {
     "type": "object",
@@ -151,6 +151,97 @@ def test_ensure_agent_raises_on_genuine_error():
             ensure_agent("some-agent", model="google-gemini/gemini-2-5-flash", instructions="x")
 
 
+def test_ensure_skill_treats_already_exists_conflict_as_success():
+    fake_response = MagicMock()
+    fake_response.status_code = 409
+    fake_response.text = '{"error":{"message":"Skill name already exists: outreach-copywriting-style-guide"}}'
+    with patch("httpx.post", return_value=fake_response):
+        ensure_skill(
+            "outreach-copywriting-style-guide",
+            repo_url="https://github.com/ram-from-tvl/signalis",
+            path="backend/app/agents/skills/outreach_copywriting_style_guide",
+            ref="main",
+            description="test",
+        )
+
+
+def test_ensure_skill_raises_on_genuine_error():
+    fake_response = MagicMock()
+    fake_response.status_code = 500
+    fake_response.text = '{"error":{"message":"internal error"}}'
+    fake_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "server error", request=MagicMock(), response=fake_response
+    )
+    with patch("httpx.post", return_value=fake_response):
+        with pytest.raises(TrueForgeError):
+            ensure_skill(
+                "some-skill",
+                repo_url="https://github.com/ram-from-tvl/signalis",
+                path="some/path",
+                ref="main",
+                description="test",
+            )
+
+
+def test_ensure_skill_posts_git_backed_manifest():
+    """Regression test locking in the real TrueForge skill contract, verified
+    against the live harness's OpenAPI schema: a skill is a `type: git`
+    manifest with a GitHub/GitLab URL, path, ref, and description — never
+    raw content posted inline."""
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured["url"] = url
+        captured["json"] = json
+        resp = MagicMock()
+        resp.status_code = 201
+        return resp
+
+    with patch("httpx.post", side_effect=fake_post):
+        ensure_skill(
+            "outreach-copywriting-style-guide",
+            repo_url="https://github.com/ram-from-tvl/signalis",
+            path="backend/app/agents/skills/outreach_copywriting_style_guide",
+            ref="main",
+            description="craft guidance",
+        )
+
+    assert captured["url"].endswith("/api/v1/settings/skills")
+    manifest = captured["json"]["manifest"]
+    assert manifest["type"] == "git"
+    assert manifest["name"] == "outreach-copywriting-style-guide"
+    assert manifest["url"] == "https://github.com/ram-from-tvl/signalis"
+    assert manifest["path"] == "backend/app/agents/skills/outreach_copywriting_style_guide"
+    assert manifest["ref"] == "main"
+    assert manifest["description"] == "craft guidance"
+
+
+def test_ensure_agent_attaches_skills_and_enables_sandbox():
+    """TrueForge requires config.sandbox.enabled=true to attach skills to an
+    agent (verified against the live harness's manifest schema). ensure_agent
+    must flip that on whenever skills are passed, not just pass the list
+    through and leave sandbox disabled."""
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured["json"] = json
+        resp = MagicMock()
+        resp.status_code = 201
+        return resp
+
+    with patch("httpx.post", side_effect=fake_post):
+        ensure_agent(
+            "signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            instructions="x",
+            skills=[{"name": "outreach-copywriting-style-guide"}],
+        )
+
+    manifest = captured["json"]["manifest"]
+    assert manifest["skills"] == [{"name": "outreach-copywriting-style-guide"}]
+    assert manifest["config"]["sandbox"]["enabled"] is True
+
+
 def test_run_agent_reasoning_uses_trueforge_when_available():
     with patch("app.agents.common.get_settings") as mock_settings, \
          patch("app.agents.common.ensure_agent") as mock_ensure, \
@@ -193,3 +284,52 @@ def test_run_agent_reasoning_falls_back_and_strips_tool_references_when_mcp_conf
         )
     assert result == {"fit": "full_fit", "reasoning": "matches", "missing_data": []}
     assert "No external tools are available" in captured["system_instruction"]
+
+
+def test_run_agent_reasoning_passes_skills_to_ensure_agent():
+    """The TrueForge path must actually forward `skills` through to
+    ensure_agent so the manifest genuinely includes the attachment, not just
+    accept the parameter and drop it."""
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent") as mock_ensure, \
+         patch("app.agents.common.run_turn", return_value={"stage": "late", "confidence": 0.9}):
+        mock_settings.return_value.trueforge_enabled = True
+        run_agent_reasoning(
+            trueforge_agent_name="signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction="plan outreach",
+            prompt="lead data",
+            response_schema=SCHEMA,
+            skills=[{"name": "outreach-copywriting-style-guide"}],
+        )
+    _, kwargs = mock_ensure.call_args
+    assert kwargs["skills"] == [{"name": "outreach-copywriting-style-guide"}]
+
+
+def test_run_agent_reasoning_injects_fallback_style_guidance_when_trueforge_unavailable():
+    """Regression test for the fallback-path style-guidance precedent: skills
+    only exist inside TrueForge's agent loop, so when the direct Gemini/HF
+    fallback path is used instead, any craft guidance that now lives only in
+    a skill must be injected into the fallback's system instruction directly
+    (mirroring the existing tool-stripping precedent), or the fallback path's
+    output quality regresses relative to the TrueForge+skill path."""
+    captured = {}
+
+    def fake_generate_json(*, system_instruction, prompt, response_schema, temperature):
+        captured["system_instruction"] = system_instruction
+        return {"touchpoints": [], "channels": [], "summary": "ok"}
+
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
+         patch("app.agents.common.generate_json", side_effect=fake_generate_json):
+        mock_settings.return_value.trueforge_enabled = True
+        run_agent_reasoning(
+            trueforge_agent_name="signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction="Plan outreach touchpoints for this lead.",
+            prompt="lead data",
+            response_schema=SCHEMA,
+            skills=[{"name": "outreach-copywriting-style-guide"}],
+            fallback_style_guidance="CONDENSED GUIDANCE: avoid generic AI-sounding copy.",
+        )
+    assert "CONDENSED GUIDANCE" in captured["system_instruction"]

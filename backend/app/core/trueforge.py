@@ -31,19 +31,34 @@ def _base_url() -> str:
     return get_settings().trueforge_url.rstrip("/")
 
 
-def ensure_agent(name: str, *, model: str, instructions: str, mcp_servers: list[dict] | None = None) -> None:
+def ensure_agent(
+    name: str,
+    *,
+    model: str,
+    instructions: str,
+    mcp_servers: list[dict] | None = None,
+    skills: list[dict] | None = None,
+) -> None:
     """Create the named TrueForge agent if it does not already exist.
 
     Agents are immutable by name once created (per TrueForge's API), so this
     treats "already exists" as success rather than trying to update in place.
+
+    `skills` is a list of name-only references (e.g. `[{"name": "outreach-
+    copywriting-style-guide"}]`) to skills already registered via
+    `ensure_skill`. Per TrueForge's manifest schema, attaching skills
+    requires the agent's sandbox to be enabled, so passing `skills` here
+    also flips `config.sandbox.enabled` to `True` for this agent.
     """
     manifest: dict[str, Any] = {
         "model": {"name": model},
         "instructions": instructions,
-        "config": {"sandbox": {"enabled": False}},
+        "config": {"sandbox": {"enabled": bool(skills)}},
     }
     if mcp_servers:
         manifest["mcp_servers"] = mcp_servers
+    if skills:
+        manifest["skills"] = skills
 
     try:
         resp = httpx.post(
@@ -59,6 +74,50 @@ def ensure_agent(name: str, *, model: str, instructions: str, mcp_servers: list[
         resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise TrueForgeError(f"Failed to register TrueForge agent {name}: {exc}") from exc
+
+
+def ensure_skill(
+    name: str, *, repo_url: str, path: str, ref: str, description: str
+) -> None:
+    """Register a git-backed TrueForge skill if it does not already exist.
+
+    TrueForge skills are name/description references whose full instructional
+    content ("SKILL.md") lives in a git repository TrueForge clones into an
+    agent's sandbox on demand — there is no "post raw content" registration
+    shape in the real API (verified against the live OpenAPI schema at
+    /api/v1/docs: `SkillManifest.type` is a `"git"`-only enum and `url` is
+    regex-constrained to a GitHub/GitLab HTTPS URL). Only the skill's
+    name/description are loaded into an agent's base context; the full
+    `SKILL.md` content is fetched from the repo only when the model decides
+    the task needs it.
+
+    Like `ensure_agent`, this treats "already exists" as success rather than
+    trying to update in place, matching TrueForge's actual conflict response
+    (HTTP 409, "Skill name already exists").
+    """
+    manifest: dict[str, Any] = {
+        "type": "git",
+        "name": name,
+        "url": repo_url,
+        "path": path,
+        "ref": ref,
+        "description": description,
+    }
+
+    try:
+        resp = httpx.post(
+            f"{_base_url()}/api/v1/settings/skills",
+            json={"manifest": manifest},
+            timeout=15.0,
+        )
+        if resp.status_code == 201:
+            logger.info("Registered TrueForge skill %s", name)
+            return
+        if resp.status_code == 409 and "already exists" in resp.text.lower():
+            return
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise TrueForgeError(f"Failed to register TrueForge skill {name}: {exc}") from exc
 
 
 def run_turn(agent_name: str, message: str) -> dict[str, Any]:

@@ -61,6 +61,8 @@ def run_agent_reasoning(
     response_schema: dict[str, Any],
     temperature: float = 0.3,
     mcp_servers: list[dict] | None = None,
+    skills: list[dict] | None = None,
+    fallback_style_guidance: str | None = None,
 ) -> dict[str, Any]:
     """Run one agent's reasoning step through the TrueForge harness so the
     real agent loop (model calls, MCP tool discovery/execution, context
@@ -71,6 +73,15 @@ def run_agent_reasoning(
     real model reasoning when the local harness sidecar is not running —
     this is a transport fallback, not a second reasoning path: both routes
     execute the same prompt and schema.
+
+    `skills` are name-only references to TrueForge skills already registered
+    via `app.core.trueforge.ensure_skill` (only the TrueForge path can use
+    them — a skill's full content loads on demand inside TrueForge's agent
+    loop, which the direct fallback path does not have). `fallback_style_guidance`,
+    if given, is appended to the system instruction only on the direct
+    fallback path, so a call whose craft guidance now lives entirely in a
+    TrueForge skill doesn't silently lose that guidance when TrueForge is
+    unavailable — mirrors the existing tool-stripping precedent below.
     """
     settings = get_settings()
     if settings.trueforge_enabled:
@@ -83,6 +94,7 @@ def run_agent_reasoning(
                     f"JSON schema exactly, and nothing else: {json.dumps(response_schema)}"
                 ),
                 mcp_servers=mcp_servers,
+                skills=skills,
             )
             return run_turn(trueforge_agent_name, prompt)
         except TrueForgeError as exc:
@@ -104,6 +116,12 @@ def run_agent_reasoning(
             "Answer using only the information given in the prompt, and do not reference "
             "or attempt to call any tool."
         )
+    if fallback_style_guidance:
+        # Same rationale as the tool-stripping block above: the direct
+        # fallback path cannot load a TrueForge skill, so any craft guidance
+        # that now lives only in a skill must be injected here explicitly or
+        # this path regresses in output quality relative to the TrueForge path.
+        fallback_instruction = f"{fallback_instruction}\n\n{fallback_style_guidance}"
 
     try:
         return generate_json(
