@@ -16,7 +16,10 @@ actually runs on.
 flowchart TD
     Start([Pipeline triggered for a lead]) --> SE["Signal Extraction Agent\n(TrueForge session)"]
     SE --> PF["Persona Fit Agent\n(TrueForge session + MCP tools)"]
-    PF -->|"MCP tool calls"| MCP[["signalis-enrichment MCP server\nclassify_company_industry\nestimate_company_size_band"]]
+    PF -->|"MCP tool calls\n(gated by require_approval_for_tools)"| Gate{Tool call approved?}
+    Gate -->|"pending: turn paused"| ToolApproval[(Persist ToolApprovalRequest\nMarketer reviews in UI)]
+    ToolApproval -->|approve: resume turn| MCP[["signalis-enrichment MCP server\nclassify_company_industry\nestimate_company_size_band"]]
+    ToolApproval -->|reject: resume w/ deny| PFFailed[AgentRun marked failed]
     MCP --> PF
     PF --> BS["Buying Stage Orchestrator Agent\n(TrueForge session)"]
     BS -->|"scoring computation"| SB[["Daytona sandbox\nrecency/strength-weighted score"]]
@@ -42,6 +45,14 @@ to a Hugging Face model, if TrueForge is not running or a turn fails — see
 Prioritization/Ranking Agent (bottom of the diagram) runs independently of
 the per-lead pipeline above it — it is triggered separately and reads across
 all leads at once rather than being a node in the per-lead graph.
+
+The tool-approval gate on Persona Fit's MCP calls only fires when the model
+actually decides to call `classify_company_industry` or
+`estimate_company_size_band` (typically when the lead's industry or company
+size is missing or worth verifying) — most pipeline runs for a lead with
+complete firmographic data never reach the `Gate` node at all, since the
+agent has no reason to call either tool. See "Human-approval checkpoint"
+below for the full pause/approve/reject mechanics.
 
 ## Node responsibilities and handoffs
 
