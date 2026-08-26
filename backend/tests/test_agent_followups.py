@@ -288,6 +288,29 @@ def test_run_followup_turn_wraps_non_dict_output_as_trueforge_error():
             run_followup_turn("existing-session-id", "question")
 
 
+def test_run_followup_turn_wraps_non_string_content_as_trueforge_error():
+    """If output.content isn't a string (e.g. TrueForge returned a list,
+    object, number, or null instead of the documented string shape),
+    _extract_json_object's unconditional .strip() must not raise a raw
+    AttributeError — it must surface as the same TrueForgeError as other
+    malformed-response cases."""
+    with patch("app.core.trueforge.httpx.post") as mock_post, patch(
+        "app.core.trueforge.httpx.get"
+    ) as mock_get:
+        turn_response = mock_post.return_value
+        turn_response.raise_for_status = lambda: None
+        turn_response.json.return_value = {"data": {"id": "turn-1"}}
+
+        poll_response = mock_get.return_value
+        poll_response.raise_for_status = lambda: None
+        poll_response.json.return_value = {
+            "data": {"state": {"status": "done", "output": {"content": ["not", "a", "string"]}}}
+        }
+
+        with pytest.raises(TrueForgeError):
+            run_followup_turn("existing-session-id", "question")
+
+
 def test_run_turn_wraps_malformed_json_from_session_creation_as_trueforge_error():
     """Same class of bug, pre-existing code path (run_turn's session
     creation, not just the newer run_followup_turn)."""

@@ -105,7 +105,12 @@ def _poll_turn_to_completion(session_id: str, turn_id: str, *, label: str) -> st
                     )
                 if not isinstance(output, dict):
                     raise TypeError(f"expected turn output to be an object, got {type(output).__name__}")
-                return output.get("content", "")
+                content = output.get("content", "")
+                if not isinstance(content, str):
+                    raise TypeError(
+                        f"expected turn output content to be a string, got {type(content).__name__}"
+                    )
+                return content
             if status == "error":
                 raise TrueForgeError(f"TrueForge turn for {label} failed: {state.get('message')}")
             if status == "requires_action":
