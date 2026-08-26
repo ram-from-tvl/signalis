@@ -3,10 +3,12 @@ import { Link } from "react-router-dom"
 import { dashboardApi, rankingApi } from "@/api/endpoints"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
 import { useToast } from "@/components/ui/toast-context"
+import type { SubagentDelegation } from "@/types/api"
 import {
   Bar,
   BarChart,
@@ -49,6 +51,35 @@ function StatTile({
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function DelegationBadge({ delegation }: { delegation: SubagentDelegation | null | undefined }) {
+  if (!delegation) return null
+
+  const config: Record<SubagentDelegation["status"], { label: string; variant: "success" | "warning" | "secondary" | "outline" }> = {
+    delegated: {
+      label: `Delegated (${delegation.subagent_count}/${delegation.expected_count} subagents)`,
+      variant: "success",
+    },
+    partial: {
+      label: `Partially delegated (${delegation.subagent_count ?? 0}/${delegation.expected_count} subagents)`,
+      variant: "warning",
+    },
+    evidence_unavailable: {
+      label: "Delegation evidence unavailable",
+      variant: "secondary",
+    },
+    not_delegated: {
+      label: "Not delegated (fallback reasoning)",
+      variant: "outline",
+    },
+  }
+  const { label, variant } = config[delegation.status]
+  return (
+    <Badge variant={variant} title="How this ranking's per-lead subagent delegation was verified">
+      {label}
+    </Badge>
   )
 }
 
@@ -291,7 +322,10 @@ export function DashboardPage() {
           )}
           {ranking && ranking.ranked_leads.length > 0 && (
             <div className="flex flex-col gap-4">
-              <p className="text-sm text-muted-foreground leading-relaxed">{ranking.summary}</p>
+              <div className="flex items-center justify-between gap-4 flex-wrap">
+                <p className="text-sm text-muted-foreground leading-relaxed">{ranking.summary}</p>
+                <DelegationBadge delegation={ranking.subagent_delegation} />
+              </div>
               <ol className="flex flex-col gap-2">
                 {ranking.ranked_leads.map((entry) => (
                   <li key={entry.lead_id}>

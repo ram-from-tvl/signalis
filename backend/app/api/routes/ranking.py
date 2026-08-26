@@ -32,6 +32,7 @@ def _to_response(ranking: PipelineRanking) -> PipelineRankingOut:
         id=ranking.id,
         summary=ranking.summary,
         ranked_leads=entries,
+        subagent_delegation=ranking.subagent_delegation,
         created_at=ranking.created_at,
     )
 

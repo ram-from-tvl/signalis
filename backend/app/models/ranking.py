@@ -28,4 +28,12 @@ class PipelineRanking(Base):
     # drifts if the lead is later reclassified, and reading it back needs no
     # per-entry Lead/StageClassification lookups.
     summary: Mapped[str] = mapped_column(Text, default="")
+    # {"status": "delegated"|"partial"|"evidence_unavailable"|"not_delegated",
+    #  "used": bool, "subagent_count": int | None, "expected_count": int,
+    #  "subagents": list[dict]} — see app.agents.prioritization.run_prioritization.
+    # This snapshot is a pipeline-wide run (agent_run_id points at a run with
+    # lead_id=None), so the existing lead-scoped Agent Trace UI never
+    # surfaces it; baking it directly onto the ranking row is what makes it
+    # reachable from the ranking API response the frontend actually reads.
+    subagent_delegation: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)

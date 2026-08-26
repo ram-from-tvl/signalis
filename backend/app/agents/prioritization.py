@@ -6,6 +6,35 @@ buying-stage classification, it produces an explicit contact-priority order
 so a rep knows who to call first, with a reason per lead — not just a raw
 score. Real LLM call, same as every other agent; only the scope (many leads
 per call instead of one) differs.
+
+Two-phase ranking via genuine TrueForge subagent delegation
+-------------------------------------------------------------
+The root agent's system instruction requires it to run two phases within one
+TrueForge turn:
+
+1. **Per-lead priority assessment (parallel).** For every lead, call
+   TrueForge's built-in `create_sub_agent` tool — genuine subagent
+   delegation, not a hand-rolled Python `asyncio.gather` over multiple
+   `run_turn` calls — passing that lead's stage/confidence/justification and
+   asking for a short, isolated `{lead_id, priority_score, reasoning}`
+   assessment. TrueForge runs these subagent threads concurrently, each with
+   its own fresh context (no shared message history, no visibility into any
+   other lead), and returns only each subagent's final result to the root.
+2. **Consolidation (root context).** Once every subagent has returned, the
+   root agent — which alone has seen every subagent's output — produces the
+   final cross-lead ordering, still applying the existing comparative
+   judgment (e.g. a high-confidence mid-stage lead can outrank a low-
+   confidence late-stage one), because that comparison inherently needs a
+   step that sees every lead's signal together, not just one lead in
+   isolation the way each subagent does.
+
+This is implemented as instructions to the model (TrueForge subagent
+delegation is a runtime feature the model itself decides to invoke via a
+built-in tool — see docs/DECISIONS.md for how this was verified against the
+live API), not a Python-side fan-out; `run_agent_reasoning_with_delegations`
+additionally returns TrueForge's own session-event record of which
+subagents actually ran, so a ranking run's `AgentRun.output` carries real
+evidence of delegation rather than trusting the model's self-report.
 """
 from __future__ import annotations
 
@@ -14,9 +43,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.agents.common import finish_run, run_agent_reasoning, start_run
+from app.agents.common import finish_run, run_agent_reasoning_with_delegations, start_run
 from app.core.config import get_settings
 from app.core.llm import LLMError
+from app.core.trueforge import TrueForgeError
 from app.models import Lead, StageClassification
 
 logger = logging.getLogger("signalis.agents")
@@ -24,18 +54,70 @@ logger = logging.getLogger("signalis.agents")
 SYSTEM_INSTRUCTION = """You are the Prioritization/Ranking Agent inside a B2B sales intelligence
 system. You are given every lead currently in the pipeline with its buying stage, confidence
 score, and stage justification. Produce a single priority order across ALL of them — rank 1 is
-who a rep should contact first today. Weigh buying stage most heavily (late beats mid beats
-early), but let confidence and justification break ties or override a naive stage-only ordering
-when the evidence clearly calls for it (e.g. a high-confidence mid-stage lead with an urgent,
-time-sensitive signal can outrank a low-confidence late-stage lead). For every lead, give a short,
-specific reason for its rank a rep could read in five seconds — not a repeat of the stage label.
-Include every lead you are given, exactly once, with no gaps or duplicate ranks."""
+who a rep should contact first today.
 
-# The prompt embeds one row (and the model must emit one ranking entry) per
-# lead, with no batching/summarization — bounded here so a very large
-# pipeline fails predictably with a clear error rather than silently
-# exceeding a provider's context window or the TrueForge turn timeout.
-MAX_LEADS_PER_RANKING_CALL = 60
+You MUST work in two phases:
+
+PHASE 1 — Per-lead priority assessment, delegated in parallel. For EVERY lead given to you, call
+your subagent delegation tool (create_sub_agent) once, in parallel, one subagent per lead. Give
+each subagent ONLY that one lead's data (lead_id, stage, confidence, justification) and instruct
+it to return strictly this JSON object and nothing else: {"lead_id": "<the lead_id>",
+"priority_score": <number 0-100, higher = contact sooner>, "reasoning": "<one sentence>"}. Do not
+assess any lead yourself in this phase — every lead's initial assessment must come from its own
+subagent. Wait for every subagent to return before moving to phase 2.
+
+PHASE 2 — Consolidation, done by you (the root agent) once every subagent has returned. You are
+the only one who sees every lead's assessment together, so this is where the real cross-lead
+comparison happens: weigh buying stage most heavily (late beats mid beats early), but let
+confidence and justification break ties or override a naive stage-only ordering when the evidence
+clearly calls for it (e.g. a high-confidence mid-stage lead with an urgent, time-sensitive signal
+can outrank a low-confidence late-stage lead) — use the subagents' priority_score and reasoning as
+input to this judgment, not as the final answer by itself. For every lead, give a short, specific
+final reason for its rank a rep could read in five seconds — not a repeat of the stage label and
+not a verbatim copy of the subagent's reasoning. Include every lead you are given, exactly once,
+with no gaps or duplicate ranks."""
+
+# SYSTEM_INSTRUCTION above unconditionally mandates a create_sub_agent tool
+# call per lead, but that tool only exists on the TrueForge path. When
+# run_agent_reasoning_with_delegations falls back to a direct Gemini/HF
+# call, it substitutes this instruction instead of reusing SYSTEM_INSTRUCTION
+# verbatim, so the model is never told to call a tool that isn't there for
+# this call. The two-phase framing (delegate, then consolidate) is dropped
+# entirely in favor of a single direct assessment across all leads at once,
+# and the model is explicitly told the difference matters so the resulting
+# degraded/non-delegated ranking is not indistinguishable from a genuine
+# two-phase delegated one in the model's own reasoning/output.
+FALLBACK_SYSTEM_INSTRUCTION = """You are the Prioritization/Ranking Agent inside a B2B sales intelligence
+system. You are given every lead currently in the pipeline with its buying stage, confidence
+score, and stage justification. Produce a single priority order across ALL of them — rank 1 is
+who a rep should contact first today.
+
+No subagent delegation is available for this request. Reason about every lead yourself, directly,
+in this one call — do not reference, attempt to call, or claim to have used any subagent or tool.
+
+Weigh buying stage most heavily (late beats mid beats early), but let confidence and justification
+break ties or override a naive stage-only ordering when the evidence clearly calls for it (e.g. a
+high-confidence mid-stage lead with an urgent, time-sensitive signal can outrank a low-confidence
+late-stage lead). For every lead, give a short, specific final reason for its rank a rep could read
+in five seconds — not a repeat of the stage label. Include every lead you are given, exactly once,
+with no gaps or duplicate ranks."""
+
+# With per-lead assessment now delegated to parallel TrueForge subagents,
+# each of which gets its own fresh, isolated context, the old ceiling (tuned
+# for a single sequential prompt embedding every lead's data at once) no
+# longer reflects the real constraint. The remaining bottleneck is the root
+# agent's own turn: it must issue one create_sub_agent tool call per lead and
+# then read every subagent's short result back into its own context for
+# consolidation — bounded by the root's iteration_limit (100, see
+# app.core.trueforge.ensure_agent's default RuntimeConfig) and by keeping the
+# consolidation-phase context (N short {lead_id, priority_score, reasoning}
+# results) comfortably inside one turn. 150 was chosen as 2.5x the old limit:
+# generous enough that this build's realistic pipeline sizes (dozens of
+# leads) are nowhere close to it, conservative enough to stay well under the
+# iteration/context ceilings above without live-testing pipeline sizes this
+# build has no real data for. Still a documented, enforced limit with a clear
+# error rather than an unbounded assumption.
+MAX_LEADS_PER_RANKING_CALL = 150
 
 
 class PrioritizationError(RuntimeError):
@@ -120,7 +202,9 @@ def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead,
 
     prompt = (
         f"Rank the following {len(leads_with_classifications)} lead(s) by contact priority "
-        f"(rank 1 = contact first):\n{rows}\n\n"
+        f"(rank 1 = contact first). Remember: phase 1 is one create_sub_agent call per lead, in "
+        f"parallel, before you do any ranking yourself; phase 2 (the final ranking) only happens "
+        f"after every subagent has returned.\n\n{rows}\n\n"
         "Return every lead exactly once, ranked 1..N, with a short reason per lead."
     )
 
@@ -145,15 +229,23 @@ def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead,
     }
 
     try:
-        result = run_agent_reasoning(
+        result, delegations, is_delegated = run_agent_reasoning_with_delegations(
             trueforge_agent_name="signalis-prioritization",
             model=get_settings().trueforge_model,
             system_instruction=SYSTEM_INSTRUCTION,
+            fallback_instruction=FALLBACK_SYSTEM_INSTRUCTION,
             prompt=prompt,
             response_schema=schema,
             temperature=0.2,
         )
-    except LLMError as exc:
+    except (LLMError, TrueForgeError) as exc:
+        # TrueForgeError reaches here from a malformed/unexpected session
+        # events payload during a delegation-evidence fetch that failed hard
+        # enough to not be swallowed as "unavailable" (see
+        # app.core.trueforge._get_session_events / run_turn) or from any
+        # other TrueForge failure not already handled by the fallback path
+        # in run_agent_reasoning_with_delegations. Either way the run must
+        # be marked failed rather than left stuck in "running" forever.
         finish_run(db, run, output={"error": str(exc)}, reasoning=str(exc), status="failed")
         raise
 
@@ -166,6 +258,53 @@ def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead,
         )
     result["ranking"] = _normalize_ranking(raw_ranking, leads_with_classifications)
     result["agent_run_id"] = run.id
+
+    # Real evidence of subagent delegation for the trace, not just the
+    # model's self-report: how many per-lead subagents TrueForge's own
+    # session events recorded actually ran, and how long each took.
+    #
+    # Three distinct states, all made visible on the persisted output rather
+    # than collapsed into a single "used" bool:
+    #   - not delegated: the call never reached TrueForge at all (fell back
+    #     to the direct LLM path, which has no subagent capability — see
+    #     FALLBACK_SYSTEM_INSTRUCTION above). `delegations` is always [] here.
+    #   - delegation evidence unavailable: a genuine TrueForge turn
+    #     completed successfully, but fetching the session events used to
+    #     verify delegation failed (see trueforge.run_turn). We still have a
+    #     valid ranking; we just can't prove how it was produced.
+    #   - delegated (full or partial): a genuine TrueForge turn completed
+    #     and event evidence was fetched. "full" means the delegation count
+    #     matches the lead count, exactly as the system prompt mandates one
+    #     subagent per lead; anything less (including zero) is "partial" —
+    #     silently accepting a partially-delegated response as equivalent to
+    #     a fully delegated one would hide a real outage or a model that
+    #     ignored the delegation instruction.
+    if not is_delegated:
+        status = "not_delegated"
+    elif delegations is None:
+        status = "evidence_unavailable"
+    elif len(delegations) >= len(leads_with_classifications) and len(leads_with_classifications) > 0:
+        status = "delegated"
+    else:
+        status = "partial"
+
+    subagent_count = len(delegations) if delegations is not None else None
+    result["subagent_delegation"] = {
+        "status": status,
+        # Kept for backward compatibility with any existing reader of this
+        # field: True only for a genuinely, fully delegated run.
+        "used": status == "delegated",
+        "subagent_count": subagent_count,
+        "expected_count": len(leads_with_classifications),
+        "subagents": delegations if delegations is not None else [],
+    }
+    if status == "partial":
+        logger.warning(
+            "Prioritization agent delegated %s/%d leads to subagents; expected exactly one "
+            "subagent per lead. Marking this run's delegation as partial.",
+            subagent_count,
+            len(leads_with_classifications),
+        )
 
     finish_run(db, run, output=result, reasoning=result.get("summary", ""))
     return result
