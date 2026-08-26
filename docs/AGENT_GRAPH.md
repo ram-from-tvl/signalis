@@ -18,6 +18,8 @@ flowchart TD
     SE --> PF["Persona Fit Agent\n(TrueForge session + MCP tools)"]
     PF -->|"MCP tool calls"| MCP[["signalis-enrichment MCP server\nclassify_company_industry\nestimate_company_size_band"]]
     MCP --> PF
+    PF -->|"MCP tool call (as needed)"| RESEARCH[["signalis-research MCP server\nsearch_company_news (Tavily)"]]
+    RESEARCH --> PF
     PF --> BS["Buying Stage Orchestrator Agent\n(TrueForge session)"]
     BS -->|"scoring computation"| SB[["Daytona sandbox\nrecency/strength-weighted score"]]
     SB --> BS
@@ -52,13 +54,18 @@ all leads at once rather than being a node in the per-lead graph.
    the `signals` rows in place and is handed forward as a summary.
 
 2. **Persona Fit Agent** receives the lead's firmographic profile plus the
-   currently active persona and solution ICP, and has the
-   `signalis-enrichment` MCP server attached. When the lead's industry or
-   company size is missing or worth verifying, it genuinely calls the
-   `classify_company_industry` and/or `estimate_company_size_band` MCP tools
-   before answering — this is TrueForge discovering and invoking a real
-   remote tool over MCP, not a Python function call embedded in the agent's
-   own code. It returns a fit classification (`full_fit` / `partial_fit` /
+   currently active persona and solution ICP, and has two MCP servers
+   attached: `signalis-enrichment` and `signalis-research`. When the lead's
+   industry or company size is missing or worth verifying, it genuinely
+   calls the `classify_company_industry` and/or `estimate_company_size_band`
+   MCP tools before answering — this is TrueForge discovering and invoking a
+   real remote tool over MCP, not a Python function call embedded in the
+   agent's own code. It also has a `search_company_news` tool (served by
+   `signalis-research`, backed by the live Tavily search API) available and
+   calls it when recent external context — funding news, a hiring surge,
+   a product launch — would genuinely sharpen the fit assessment; this is
+   not called on every lead, since recent news is not always relevant or
+   available. It returns a fit classification (`full_fit` / `partial_fit` /
    `mismatch`), reasoning, and any missing data it had to work around. This
    result is handed to both the Buying Stage Orchestrator (fit context
    informs how much weight to give ambiguous signals) and later to the

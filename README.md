@@ -45,12 +45,16 @@ lead — updating its understanding automatically whenever new signals arrive.
   confidence score; what changed is that each *node* in that graph now
   delegates its reasoning to TrueForge instead of calling an LLM SDK
   directly.
-- **MCP tools**: the Persona Fit agent calls a real remote MCP server
-  (`app/mcp_tools/enrichment_server.py`, served over HTTP) exposing firmographic
-  enrichment tools — `classify_company_industry` and
-  `estimate_company_size_band` — so a lead's company data is enriched via a
-  genuine tool call discovered and invoked through TrueForge's MCP layer,
-  not a function call embedded in the agent's own Python code.
+- **MCP tools**: the Persona Fit agent calls two real remote MCP servers.
+  `app/mcp_tools/enrichment_server.py` exposes firmographic enrichment tools
+  — `classify_company_industry` and `estimate_company_size_band`.
+  `app/mcp_tools/research_server.py` exposes `search_company_news`, which
+  calls the live Tavily search API (https://tavily.com) for recent news,
+  funding, and hiring signals about the lead's company, so the agent can
+  ground its reasoning in current external context rather than only the
+  static CRM/ingested data already in this app. Both are genuine tool calls
+  discovered and invoked through TrueForge's MCP layer, not function calls
+  embedded in the agent's own Python code, and both are served over HTTP.
 - **Sandboxed execution**: the buying-stage signal-strength score is computed
   by running generated Python inside a Daytona sandbox rather than as
   in-process business logic, with a local fallback computation if the
@@ -101,7 +105,8 @@ backend/
     core/          config, the TrueForge HTTP client, the Gemini/HF LLM
                    fallback, the Daytona sandbox wrapper, and the one-time
                    TrueForge provider bootstrap script (trueforge_bootstrap.py)
-    mcp_tools/     the remote MCP server exposing enrichment tools
+    mcp_tools/     the remote MCP servers: firmographic enrichment tools and
+                   the Tavily-backed live web-research tool
     db/            SQLAlchemy session/base + demo data seeding
     models/        SQLAlchemy ORM models, one module per domain entity
     schemas/       Pydantic request/response schemas, one module per domain
@@ -153,6 +158,11 @@ DAYTONA_API_KEY=your-daytona-api-key
 DAYTONA_API_URL=https://app.daytona.io/api
 DAYTONA_SANDBOX_ID=your-sandbox-id
 
+# Optional: used only by the Persona Fit agent's search_company_news MCP
+# tool (live company news/funding/hiring lookups via https://tavily.com);
+# falls back to a "not queried" result if unset or the call fails
+TAVILY_API_KEY=your-tavily-api-key
+
 # Optional: point at a different local TrueForge instance, or set
 # TRUEFORGE_ENABLED=false to skip the harness and call Gemini/HF directly
 TRUEFORGE_URL=http://localhost:8790
@@ -180,6 +190,20 @@ python -m app.mcp_tools.enrichment_server
 This serves the firmographic enrichment tools at `http://127.0.0.1:8791/mcp`.
 Leave it running in its own terminal.
 
+### 3b. Start the research MCP server
+
+```bash
+cd backend
+source venv/bin/activate
+python -m app.mcp_tools.research_server
+```
+
+This serves the `search_company_news` live web-research tool at
+`http://127.0.0.1:8792/mcp`. Leave it running in its own terminal. It works
+without `TAVILY_API_KEY` set (the tool returns a graceful "not queried"
+result instead of failing the agent turn), but genuinely calls the Tavily
+API only once that key is configured.
+
 ### 4. Backend
 
 ```bash
@@ -196,10 +220,11 @@ The API is now served at `http://localhost:8000`, with interactive docs at
 Individual TrueForge agents (one per Signalis agent) register themselves
 automatically the first time each one runs.
 
-If TrueForge or the MCP server is not running, every agent call still works —
-`app/agents/common.run_agent_reasoning` catches the transport failure and
-falls back to a direct Gemini/Hugging-Face call — but the MCP tool call and
-the TrueForge-native agent loop will not be exercised in that case.
+If TrueForge or either MCP server is not running, every agent call still
+works — `app/agents/common.run_agent_reasoning` catches the transport
+failure and falls back to a direct Gemini/Hugging-Face call — but the MCP
+tool calls and the TrueForge-native agent loop will not be exercised in
+that case.
 
 ### 5. Load sample data (optional but recommended for a first run)
 
@@ -251,13 +276,15 @@ The app is served at `http://localhost:5173`.
   distinguished by agent, with its input summary and full reasoning text —
   this is real persisted data, inspectable after the fact, not a live-only
   view.
-- **Real MCP tool use**: With TrueForge and the enrichment MCP server running
-  (setup steps 2-3), any pipeline run's Persona Fit step genuinely discovers
+- **Real MCP tool use**: With TrueForge and both MCP servers running (setup
+  steps 2, 3, 3b), any pipeline run's Persona Fit step genuinely discovers
   and calls the `classify_company_industry` / `estimate_company_size_band`
-  tools over MCP. This is visible directly in TrueForge's own session events
-  (`GET /api/v1/sessions/{id}/events` on the TrueForge harness, port 8790)
-  as real `mcp.initialize` and tool-call events, not just in the agent's
-  final answer.
+  tools, and — when recent external context would sharpen the fit
+  assessment — the `search_company_news` tool, over MCP. This is visible
+  directly in TrueForge's own session events (`GET
+  /api/v1/sessions/{id}/events` on the TrueForge harness, port 8790) as real
+  `mcp.initialize` and tool-call events, not just in the agent's final
+  answer.
 - **Sandboxed code execution**: Every Buying Stage Orchestrator run computes
   its recency/strength-weighted signal score by executing generated Python
   inside the configured Daytona sandbox; `agent_runs.output.signal_score_computed_via`
