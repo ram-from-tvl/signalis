@@ -384,6 +384,59 @@ def test_ensure_agent_explicit_empty_skills_clears_existing_skills():
     assert put_manifest["config"]["sandbox"]["enabled"] is False
 
 
+def test_ensure_agent_wraps_malformed_list_response_as_trueforge_error():
+    """Regression test for Finding 3 (Qodo, 2nd pass, PR #11): a malformed
+    but 2xx response body from the list-agents endpoint that `_update_agent`
+    calls on a 409 (e.g. an HTML error page or truncated body served with a
+    200 status by a misbehaving proxy/dependency) must still surface as
+    `TrueForgeError`, not a raw `json.JSONDecodeError` — otherwise
+    `run_agent_reasoning`'s `except TrueForgeError` never triggers, the
+    direct-LLM fallback never runs, and the whole outreach-planning call
+    blows up instead of degrading gracefully."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-outreach-planner"}}'
+
+    malformed_list_response = MagicMock()
+    malformed_list_response.raise_for_status = MagicMock()
+    malformed_list_response.json.side_effect = json.JSONDecodeError("bad json", "<html>error</html>", 0)
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=malformed_list_response):
+        with pytest.raises(TrueForgeError):
+            ensure_agent(
+                "signalis-outreach-planner",
+                model="google-gemini/gemini-2-5-flash",
+                instructions="new instructions",
+                skills=[{"name": "outreach-copywriting-style-guide"}],
+            )
+
+
+def test_ensure_agent_wraps_unexpected_list_shape_as_trueforge_error():
+    """Companion to the malformed-JSON case above: a 2xx response that parses
+    as JSON but has an unexpected `data` shape (e.g. a dict instead of a
+    list of agent records) must also surface as `TrueForgeError` rather than
+    a raw `TypeError` from iterating/indexing it, so it is still caught by
+    `run_agent_reasoning`'s fallback handling."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-outreach-planner"}}'
+
+    bad_shape_response = MagicMock()
+    bad_shape_response.raise_for_status = MagicMock()
+    bad_shape_response.json.return_value = {"data": {"unexpected": "shape"}}
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=bad_shape_response):
+        with pytest.raises(TrueForgeError):
+            ensure_agent(
+                "signalis-outreach-planner",
+                model="google-gemini/gemini-2-5-flash",
+                instructions="new instructions",
+                skills=[{"name": "outreach-copywriting-style-guide"}],
+            )
+
+
 def test_ensure_agent_attaches_skills_and_enables_sandbox():
     """TrueForge requires config.sandbox.enabled=true to attach skills to an
     agent (verified against the live harness's manifest schema). ensure_agent
@@ -501,3 +554,39 @@ def test_run_agent_reasoning_injects_fallback_style_guidance_when_trueforge_unav
             fallback_style_guidance="CONDENSED GUIDANCE: avoid generic AI-sounding copy.",
         )
     assert "CONDENSED GUIDANCE" in captured["system_instruction"]
+
+
+def test_run_agent_reasoning_does_not_duplicate_style_guidance_already_in_system_instruction():
+    """Regression test for Finding 2 (Qodo, 2nd pass, PR #11): when a caller
+    (e.g. `run_outreach_planner`, on a skill-registration failure) has
+    already folded the condensed style guidance into `system_instruction`
+    itself — so the TrueForge-bound instruction carries it — and also passes
+    the same text as `fallback_style_guidance`, the direct-LLM fallback path
+    must not append it a second time. Before the fix, `fallback_instruction`
+    started as `system_instruction` (already containing the guidance once)
+    and then unconditionally appended `fallback_style_guidance` (the same
+    text again), so every direct-fallback call in that situation sent the
+    model two copies of the same guidance block."""
+    captured = {}
+
+    def fake_generate_json(*, system_instruction, prompt, response_schema, temperature):
+        captured["system_instruction"] = system_instruction
+        return {"touchpoints": [], "channels": [], "summary": "ok"}
+
+    guidance = "CONDENSED GUIDANCE: avoid generic AI-sounding copy."
+    system_instruction_with_guidance = f"Plan outreach touchpoints for this lead.\n\n{guidance}"
+
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
+         patch("app.agents.common.generate_json", side_effect=fake_generate_json):
+        mock_settings.return_value.trueforge_enabled = True
+        run_agent_reasoning(
+            trueforge_agent_name="signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction=system_instruction_with_guidance,
+            prompt="lead data",
+            response_schema=SCHEMA,
+            skills=None,
+            fallback_style_guidance=guidance,
+        )
+    assert captured["system_instruction"].count(guidance) == 1

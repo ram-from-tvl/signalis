@@ -187,6 +187,44 @@ def test_outreach_planner_injects_condensed_guidance_when_skill_registration_fai
     assert CONDENSED_STYLE_GUIDANCE in reasoning_kwargs["system_instruction"]
 
 
+def test_outreach_planner_end_to_end_fallback_does_not_duplicate_guidance_after_skill_failure(
+    db_session, sample_lead
+):
+    """End-to-end regression test for Finding 2 (Qodo, 2nd pass, PR #11),
+    exercising the real `run_agent_reasoning`/`common.py` logic (not mocked
+    away like the other outreach-planner tests) so the interaction between
+    `outreach_planner.py`'s condensed-guidance injection and `common.py`'s
+    own fallback-guidance injection is actually tested end to end.
+
+    Scenario: TrueForge is enabled, but skill registration fails this call
+    (skills=None) *and* the TrueForge call itself fails, so execution
+    reaches the direct-LLM fallback. Before the fix, the model would have
+    received CONDENSED_STYLE_GUIDANCE twice in its system instruction:
+    once because `trueforge_instruction` already had it folded in, and
+    again because `common.py` unconditionally appended
+    `fallback_style_guidance`."""
+    from app.agents.skills.outreach_copywriting_style_guide import CONDENSED_STYLE_GUIDANCE
+    from app.core.trueforge import TrueForgeError
+
+    captured = {}
+
+    def fake_generate_json(*, system_instruction, prompt, response_schema, temperature):
+        captured["system_instruction"] = system_instruction
+        return {"touchpoints": [], "channels": ["email"], "summary": "ok"}
+
+    with patch("app.agents.outreach_planner.get_settings") as mock_outreach_settings, \
+         patch("app.agents.outreach_planner.ensure_skill", side_effect=RuntimeError("TrueForge 500")), \
+         patch("app.agents.common.get_settings") as mock_common_settings, \
+         patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
+         patch("app.agents.common.generate_json", side_effect=fake_generate_json):
+        mock_outreach_settings.return_value.trueforge_enabled = True
+        mock_outreach_settings.return_value.trueforge_model = "google-gemini/gemini-2-5-flash"
+        mock_common_settings.return_value.trueforge_enabled = True
+        run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, None, None)
+
+    assert captured["system_instruction"].count(CONDENSED_STYLE_GUIDANCE) == 1
+
+
 def test_condensed_style_guidance_covers_core_craft_points():
     """Sanity check that the fallback path's condensed guidance is a real
     summary of the skill's content, not an empty placeholder — covers the

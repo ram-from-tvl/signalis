@@ -136,7 +136,15 @@ def _update_agent(name: str, manifest: dict[str, Any], *, skills_explicit: bool)
         )
         put_resp.raise_for_status()
         logger.info("Updated TrueForge agent %s manifest", name)
-    except (httpx.HTTPError, KeyError) as exc:
+    except (httpx.HTTPError, KeyError, ValueError, TypeError) as exc:
+        # ValueError covers `get_resp.json()` raising `json.JSONDecodeError`
+        # on a malformed (but 2xx) response body from the list-agents
+        # endpoint; TypeError covers an unexpected response shape, e.g.
+        # `data` not being a list (`for a in agents` / `a["name"]` above).
+        # Without catching these too, a malformed dependency response
+        # escapes as a raw ValueError/TypeError instead of TrueForgeError,
+        # so `run_agent_reasoning`'s `except TrueForgeError` never triggers
+        # and the direct-LLM fallback never runs.
         raise TrueForgeError(f"Failed to update TrueForge agent {name}: {exc}") from exc
 
 

@@ -116,11 +116,21 @@ def run_agent_reasoning(
             "Answer using only the information given in the prompt, and do not reference "
             "or attempt to call any tool."
         )
-    if fallback_style_guidance:
+    if fallback_style_guidance and fallback_style_guidance not in fallback_instruction:
         # Same rationale as the tool-stripping block above: the direct
         # fallback path cannot load a TrueForge skill, so any craft guidance
         # that now lives only in a skill must be injected here explicitly or
         # this path regresses in output quality relative to the TrueForge path.
+        #
+        # The `not in` guard avoids double-injecting: when a caller (e.g.
+        # `run_outreach_planner`) has already folded the same guidance into
+        # `system_instruction` for the TrueForge-path instruction (skill
+        # registration failed this call — see
+        # `outreach_planner._ensure_style_guide_skill`), that guidance is
+        # already present here too, since `fallback_instruction` starts from
+        # `system_instruction`. Appending it again would send the model the
+        # same block of text twice on every direct-fallback call in that
+        # situation.
         fallback_instruction = f"{fallback_instruction}\n\n{fallback_style_guidance}"
 
     try:
