@@ -16,7 +16,7 @@ from app.schemas import (
     PipelineRunResult,
     StageClassificationOut,
 )
-from app.services.pipeline import run_pipeline_for_lead
+from app.services.pipeline import PipelinePausedForApproval, run_pipeline_for_lead
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
@@ -39,6 +39,18 @@ def run_pipeline(payload: PipelineRunRequest, db: Session = Depends(get_db)):
         started = time.perf_counter()
         try:
             outcome = run_pipeline_for_lead(db, lead)
+        except PipelinePausedForApproval as exc:
+            tool_names = ", ".join(sorted({r.tool_name for r in exc.requests}))
+            errors.append(
+                {
+                    "lead_id": lead.id,
+                    "error": (
+                        f"Paused awaiting tool approval ({tool_names}). Review and approve/reject "
+                        "it under Pending Tool Approvals, then regenerate the plan."
+                    ),
+                }
+            )
+            continue
         except LLMError as exc:
             errors.append({"lead_id": lead.id, "error": str(exc)})
             continue

@@ -11,6 +11,7 @@ import type {
   PipelineRunResponse,
   Solution,
   SolutionInput,
+  ToolApprovalRequest,
 } from "@/types/api"
 
 export const personasApi = {
@@ -87,4 +88,17 @@ export const dashboardApi = {
 export const rankingApi = {
   run: () => apiClient.post<PipelineRanking>("/api/ranking/run").then((r) => r.data),
   latest: () => apiClient.get<PipelineRanking | null>("/api/ranking/latest").then((r) => r.data),
+}
+
+export const toolApprovalsApi = {
+  listForLead: (leadId: string) =>
+    apiClient
+      .get<ToolApprovalRequest[]>("/api/tool-approvals", { params: { lead_id: leadId } })
+      .then((r) => r.data),
+  approve: (requestId: string) =>
+    apiClient.post<ToolApprovalRequest>(`/api/tool-approvals/${requestId}/approve`).then((r) => r.data),
+  reject: (requestId: string, reason?: string) =>
+    apiClient
+      .post<ToolApprovalRequest>(`/api/tool-approvals/${requestId}/reject`, { reason: reason ?? "" })
+      .then((r) => r.data),
 }

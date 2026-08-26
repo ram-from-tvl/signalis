@@ -7,6 +7,7 @@ from app.schemas.persona import PersonaCreate, PersonaOut
 from app.schemas.pipeline import PipelineRunRequest, PipelineRunResponse, PipelineRunResult
 from app.schemas.ranking import PipelineRankingOut, RankedLeadEntry
 from app.schemas.solution import SolutionCreate, SolutionOut
+from app.schemas.tool_approval import ToolApprovalActionRequest, ToolApprovalRequestOut
 
 __all__ = [
     "PersonaCreate",
@@ -29,4 +30,6 @@ __all__ = [
     "DashboardStats",
     "RankedLeadEntry",
     "PipelineRankingOut",
+    "ToolApprovalRequestOut",
+    "ToolApprovalActionRequest",
 ]

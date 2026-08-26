@@ -176,3 +176,17 @@ export interface PipelineRanking {
   ranked_leads: RankedLeadEntry[]
   created_at: string
 }
+
+export type ToolApprovalStatus = "pending" | "approved" | "rejected"
+
+export interface ToolApprovalRequest {
+  id: string
+  lead_id: string | null
+  agent_run_id: string | null
+  trueforge_agent_name: string
+  tool_name: string
+  tool_input: Record<string, unknown>
+  status: ToolApprovalStatus
+  created_at: string
+  resolved_at: string | null
+}

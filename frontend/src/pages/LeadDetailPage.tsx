@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useParams, Link } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { leadsApi, pipelineApi, approvalsApi } from "@/api/endpoints"
+import { leadsApi, pipelineApi, approvalsApi, toolApprovalsApi } from "@/api/endpoints"
 import { ApiError } from "@/api/client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
 import { useToast } from "@/components/ui/toast-context"
-import { ArrowLeft, Sparkles, TrendingUp, CheckCircle2, XCircle, Clock, Bot } from "lucide-react"
+import { ArrowLeft, Sparkles, TrendingUp, CheckCircle2, XCircle, Clock, Bot, ShieldAlert } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
 import { cn } from "@/lib/utils"
 
@@ -71,9 +71,21 @@ export function LeadDetailPage() {
     retry: (failureCount, err) => (err instanceof ApiError && err.status === 404 ? false : failureCount < 3),
   })
 
+  const {
+    data: toolApprovals,
+    error: toolApprovalsError,
+    isLoading: toolApprovalsLoading,
+  } = useQuery({
+    queryKey: ["tool-approvals", leadId],
+    queryFn: () => toolApprovalsApi.listForLead(leadId!),
+    enabled: !!leadId,
+    retry: (failureCount, err) => (err instanceof ApiError && err.status === 404 ? false : failureCount < 3),
+  })
+
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ["lead-detail", leadId] })
     queryClient.invalidateQueries({ queryKey: ["lead-trace", leadId] })
+    queryClient.invalidateQueries({ queryKey: ["tool-approvals", leadId] })
     queryClient.invalidateQueries({ queryKey: ["leads"] })
     queryClient.invalidateQueries({ queryKey: ["dashboard-stats"] })
   }
@@ -141,6 +153,28 @@ export function LeadDetailPage() {
       invalidateAll()
       push({ title: "Classification rejected", variant: "info" })
     },
+  })
+
+  const approveToolCall = useMutation({
+    mutationFn: (requestId: string) => toolApprovalsApi.approve(requestId),
+    onSuccess: () => {
+      invalidateAll()
+      push({
+        title: "Tool call approved",
+        description: "Persona Fit resumed and completed. Click \"Regenerate Plan\" to continue the pipeline.",
+        variant: "success",
+      })
+    },
+    onError: (err: Error) => push({ title: "Could not approve tool call", description: err.message, variant: "error" }),
+  })
+
+  const rejectToolCall = useMutation({
+    mutationFn: (requestId: string) => toolApprovalsApi.reject(requestId),
+    onSuccess: () => {
+      invalidateAll()
+      push({ title: "Tool call rejected", variant: "info" })
+    },
+    onError: (err: Error) => push({ title: "Could not reject tool call", description: err.message, variant: "error" }),
   })
 
   if (isLoading) {
@@ -284,6 +318,76 @@ export function LeadDetailPage() {
           </CardContent>
         </Card>
       )}
+
+      {toolApprovalsLoading && (
+        <Card aria-busy="true" aria-live="polite">
+          <CardContent className="py-4">
+            <Skeleton className="h-4 w-48 mb-2" />
+            <Skeleton className="h-4 w-full" />
+          </CardContent>
+        </Card>
+      )}
+      {!toolApprovalsLoading && toolApprovalsError && (
+        <Card>
+          <CardContent className="py-4 text-sm text-muted-foreground">
+            Couldn't load pending tool approvals.{" "}
+            {toolApprovalsError instanceof Error ? toolApprovalsError.message : "Something went wrong contacting the server."}
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-3 block"
+              onClick={() => queryClient.invalidateQueries({ queryKey: ["tool-approvals", leadId] })}
+            >
+              Try again
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+      {!toolApprovalsLoading &&
+        !toolApprovalsError &&
+        (toolApprovals ?? []).map((request) => (
+          <Card key={request.id} className="border-warning/50">
+            <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">
+              <div className="flex items-center gap-2">
+                <ShieldAlert className="h-4 w-4 text-warning shrink-0" />
+                <div>
+                  <CardTitle>Pending Tool Approval</CardTitle>
+                  <CardDescription>
+                    Persona Fit paused before calling <span className="font-mono">{request.tool_name}</span> on
+                    the enrichment MCP server
+                  </CardDescription>
+                </div>
+              </div>
+              <Badge variant="warning">Awaiting Approval</Badge>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="rounded-lg bg-secondary/50 p-3 text-sm">
+                <p className="font-semibold mb-1">Tool input</p>
+                <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono">
+                  {JSON.stringify(request.tool_input, null, 2)}
+                </pre>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  variant="default"
+                  onClick={() => approveToolCall.mutate(request.id)}
+                  disabled={approveToolCall.isPending || rejectToolCall.isPending}
+                >
+                  <CheckCircle2 className="h-4 w-4" /> Approve Tool Call
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => rejectToolCall.mutate(request.id)}
+                  disabled={approveToolCall.isPending || rejectToolCall.isPending}
+                >
+                  <XCircle className="h-4 w-4" /> Reject
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        ))}
 
       <Tabs defaultValue="plan">
         <TabsList>
