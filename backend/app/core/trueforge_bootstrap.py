@@ -114,6 +114,20 @@ def main() -> None:
         },
     )
 
+    print("Registering the outreach copywriting style guide skill...")
+    # Skills only support POST-create (409 on a name that already exists),
+    # not the bulk PUT-upsert shape the providers/MCP server above use — see
+    # app.core.trueforge.ensure_skill. This registration also happens lazily
+    # on the Outreach Planner's first run, but doing it here too means the
+    # skill already exists by the time any agent tries to attach it, instead
+    # of relying on registration order at cold start.
+    from app.agents.outreach_planner import _ensure_style_guide_skill
+
+    if _ensure_style_guide_skill() is not None:
+        print("  ok: outreach-copywriting-style-guide skill registered")
+    else:
+        print("  warning: could not register outreach-copywriting-style-guide skill", file=sys.stderr)
+
     print("Done. Individual agents register automatically on first pipeline run.")
 
 

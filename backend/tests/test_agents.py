@@ -93,6 +93,150 @@ def test_outreach_plan_has_expected_shape(db_session, sample_lead):
     assert result["channels"] == ["email", "linkedin"]
 
 
+def test_outreach_planner_registers_and_attaches_copywriting_skill(db_session, sample_lead):
+    """The Outreach Planner must register the outreach-copywriting-style-guide
+    TrueForge skill and attach it (name-only reference) to the agent call, so
+    the manifest genuinely includes the skill rather than the skill sitting
+    unused next to an unchanged prompt."""
+    persona = Persona(role="VP Sales", seniority="VP", industry="SaaS", company_size_band="51-200", geography="US")
+    solution = Solution(name="Test Solution", problem_solved="Testing things", channels=["email"])
+    mocked_response = {
+        "touchpoints": [
+            {"day_offset": 0, "channel": "email", "content_theme": "intro", "message_copy": "Hi"}
+        ],
+        "channels": ["email"],
+        "summary": "A short plan.",
+    }
+
+    with patch("app.agents.outreach_planner.get_settings") as mock_settings, \
+         patch("app.agents.outreach_planner.ensure_skill") as mock_ensure_skill, \
+         patch("app.agents.outreach_planner.run_agent_reasoning", return_value=mocked_response) as mock_reasoning:
+        mock_settings.return_value.trueforge_enabled = True
+        mock_settings.return_value.trueforge_model = "google-gemini/gemini-2-5-flash"
+        run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution)
+
+    mock_ensure_skill.assert_called_once()
+    _, ensure_skill_kwargs = mock_ensure_skill.call_args
+    assert ensure_skill_kwargs["repo_url"].startswith("https://github.com/")
+    assert ensure_skill_kwargs["path"].endswith("outreach_copywriting_style_guide")
+
+    _, reasoning_kwargs = mock_reasoning.call_args
+    assert reasoning_kwargs["skills"] == [{"name": "outreach-copywriting-style-guide"}]
+    # The task-mechanical instruction should still point at the skill even
+    # though the copywriting craft guidance itself has been extracted out of it.
+    assert "outreach-copywriting-style-guide" in reasoning_kwargs["system_instruction"]
+    assert reasoning_kwargs["fallback_style_guidance"]
+
+
+def test_outreach_planner_skips_skill_registration_when_trueforge_disabled(db_session, sample_lead):
+    """When TrueForge is disabled, registering a TrueForge-only skill would
+    always fail; the planner should skip registration and still produce a
+    plan via the direct fallback path, relying on `fallback_style_guidance`
+    to carry the craft guidance instead."""
+    mocked_response = {"touchpoints": [], "channels": ["email"], "summary": "ok"}
+
+    with patch("app.agents.outreach_planner.get_settings") as mock_settings, \
+         patch("app.agents.outreach_planner.ensure_skill") as mock_ensure_skill, \
+         patch("app.agents.outreach_planner.run_agent_reasoning", return_value=mocked_response) as mock_reasoning:
+        mock_settings.return_value.trueforge_enabled = False
+        mock_settings.return_value.trueforge_model = "google-gemini/gemini-2-5-flash"
+        run_outreach_planner(db_session, sample_lead, "early", 0.3, {"fit": "partial_fit"}, None, None)
+
+    mock_ensure_skill.assert_not_called()
+    _, reasoning_kwargs = mock_reasoning.call_args
+    assert reasoning_kwargs["skills"] is None
+    assert reasoning_kwargs["fallback_style_guidance"]
+
+
+def test_outreach_planner_injects_condensed_guidance_when_skill_registration_fails(db_session, sample_lead):
+    """Regression test for Finding 2 (Qodo, PR #11): if TrueForge is enabled
+    but the skill fails to register this call (e.g. a transient TrueForge
+    error), the TrueForge-path call must NOT silently proceed with neither
+    the full skill nor the condensed fallback guidance — that would produce
+    an outreach plan with no copywriting craft guidance at all, persisted
+    as an indistinguishable "completed" run. The condensed guidance (the
+    same string already used on the direct-LLM fallback path) must be
+    folded into the TrueForge system_instruction for that call instead."""
+    persona = Persona(role="VP Sales", seniority="VP", industry="SaaS", company_size_band="51-200", geography="US")
+    solution = Solution(name="Test Solution", problem_solved="Testing things", channels=["email"])
+    mocked_response = {
+        "touchpoints": [
+            {"day_offset": 0, "channel": "email", "content_theme": "intro", "message_copy": "Hi"}
+        ],
+        "channels": ["email"],
+        "summary": "A short plan.",
+    }
+
+    with patch("app.agents.outreach_planner.get_settings") as mock_settings, \
+         patch("app.agents.outreach_planner.ensure_skill", side_effect=RuntimeError("TrueForge 500")), \
+         patch("app.agents.outreach_planner.run_agent_reasoning", return_value=mocked_response) as mock_reasoning:
+        mock_settings.return_value.trueforge_enabled = True
+        mock_settings.return_value.trueforge_model = "google-gemini/gemini-2-5-flash"
+        run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution)
+
+    _, reasoning_kwargs = mock_reasoning.call_args
+    # skills must be None (caller has no opinion this call), not [] (which
+    # would mean "explicitly no skills" and could clobber a previously
+    # attached skill on ensure_agent's update path).
+    assert reasoning_kwargs["skills"] is None
+    # But the instruction actually sent to run_agent_reasoning — which is
+    # what ensure_agent wraps into the TrueForge agent's manifest
+    # instructions — must still carry real copywriting guidance.
+    from app.agents.skills.outreach_copywriting_style_guide import CONDENSED_STYLE_GUIDANCE
+
+    assert CONDENSED_STYLE_GUIDANCE in reasoning_kwargs["system_instruction"]
+
+
+def test_outreach_planner_end_to_end_fallback_does_not_duplicate_guidance_after_skill_failure(
+    db_session, sample_lead
+):
+    """End-to-end regression test for Finding 2 (Qodo, 2nd pass, PR #11),
+    exercising the real `run_agent_reasoning`/`common.py` logic (not mocked
+    away like the other outreach-planner tests) so the interaction between
+    `outreach_planner.py`'s condensed-guidance injection and `common.py`'s
+    own fallback-guidance injection is actually tested end to end.
+
+    Scenario: TrueForge is enabled, but skill registration fails this call
+    (skills=None) *and* the TrueForge call itself fails, so execution
+    reaches the direct-LLM fallback. Before the fix, the model would have
+    received CONDENSED_STYLE_GUIDANCE twice in its system instruction:
+    once because `trueforge_instruction` already had it folded in, and
+    again because `common.py` unconditionally appended
+    `fallback_style_guidance`."""
+    from app.agents.skills.outreach_copywriting_style_guide import CONDENSED_STYLE_GUIDANCE
+    from app.core.trueforge import TrueForgeError
+
+    captured = {}
+
+    def fake_generate_json(*, system_instruction, prompt, response_schema, temperature):
+        captured["system_instruction"] = system_instruction
+        return {"touchpoints": [], "channels": ["email"], "summary": "ok"}
+
+    with patch("app.agents.outreach_planner.get_settings") as mock_outreach_settings, \
+         patch("app.agents.outreach_planner.ensure_skill", side_effect=RuntimeError("TrueForge 500")), \
+         patch("app.agents.common.get_settings") as mock_common_settings, \
+         patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
+         patch("app.agents.common.generate_json", side_effect=fake_generate_json):
+        mock_outreach_settings.return_value.trueforge_enabled = True
+        mock_outreach_settings.return_value.trueforge_model = "google-gemini/gemini-2-5-flash"
+        mock_common_settings.return_value.trueforge_enabled = True
+        run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, None, None)
+
+    assert captured["system_instruction"].count(CONDENSED_STYLE_GUIDANCE) == 1
+
+
+def test_condensed_style_guidance_covers_core_craft_points():
+    """Sanity check that the fallback path's condensed guidance is a real
+    summary of the skill's content, not an empty placeholder — covers the
+    same core points called out in SKILL.md so the no-TrueForge path doesn't
+    silently regress in output quality."""
+    from app.agents.skills.outreach_copywriting_style_guide import CONDENSED_STYLE_GUIDANCE
+
+    assert len(CONDENSED_STYLE_GUIDANCE) > 200
+    for keyword in ["channel", "signal", "cadence", "AI-sounding"]:
+        assert keyword.lower() in CONDENSED_STYLE_GUIDANCE.lower()
+
+
 def test_persona_fit_handles_missing_persona_and_solution(db_session, sample_lead):
     with patch(
         "app.agents.persona_fit.run_agent_reasoning",
