@@ -12,6 +12,7 @@ import type {
   Solution,
   SolutionInput,
   ToolApprovalRequest,
+  ToolApprovalResolution,
 } from "@/types/api"
 
 export const personasApi = {
@@ -96,9 +97,11 @@ export const toolApprovalsApi = {
       .get<ToolApprovalRequest[]>("/api/tool-approvals", { params: { lead_id: leadId } })
       .then((r) => r.data),
   approve: (requestId: string) =>
-    apiClient.post<ToolApprovalRequest>(`/api/tool-approvals/${requestId}/approve`).then((r) => r.data),
+    apiClient
+      .post<ToolApprovalResolution>(`/api/tool-approvals/${requestId}/approve`)
+      .then((r) => r.data),
   reject: (requestId: string, reason?: string) =>
     apiClient
-      .post<ToolApprovalRequest>(`/api/tool-approvals/${requestId}/reject`, { reason: reason ?? "" })
+      .post<ToolApprovalResolution>(`/api/tool-approvals/${requestId}/reject`, { reason: reason ?? "" })
       .then((r) => r.data),
 }

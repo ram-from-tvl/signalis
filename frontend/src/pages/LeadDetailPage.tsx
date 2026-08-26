@@ -157,22 +157,38 @@ export function LeadDetailPage() {
 
   const approveToolCall = useMutation({
     mutationFn: (requestId: string) => toolApprovalsApi.approve(requestId),
-    onSuccess: () => {
+    onSuccess: (resolution) => {
       invalidateAll()
-      push({
-        title: "Tool call approved",
-        description: "Persona Fit resumed and completed. Click \"Regenerate Plan\" to continue the pipeline.",
-        variant: "success",
-      })
+      if (resolution.followup) {
+        push({
+          title: "Tool call approved",
+          description: `Persona Fit resumed but immediately hit another approval gate (${resolution.followup.tool_name}). Review it below to continue.`,
+          variant: "info",
+        })
+      } else {
+        push({
+          title: "Tool call approved",
+          description: "Persona Fit resumed and completed. Click \"Regenerate Plan\" to continue the pipeline.",
+          variant: "success",
+        })
+      }
     },
     onError: (err: Error) => push({ title: "Could not approve tool call", description: err.message, variant: "error" }),
   })
 
   const rejectToolCall = useMutation({
     mutationFn: (requestId: string) => toolApprovalsApi.reject(requestId),
-    onSuccess: () => {
+    onSuccess: (resolution) => {
       invalidateAll()
-      push({ title: "Tool call rejected", variant: "info" })
+      if (resolution.followup) {
+        push({
+          title: "Tool call rejected",
+          description: `Persona Fit resumed but immediately hit another approval gate (${resolution.followup.tool_name}). Review it below.`,
+          variant: "info",
+        })
+      } else {
+        push({ title: "Tool call rejected", variant: "info" })
+      }
     },
     onError: (err: Error) => push({ title: "Could not reject tool call", description: err.message, variant: "error" }),
   })
