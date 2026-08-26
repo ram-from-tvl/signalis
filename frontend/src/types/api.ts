@@ -177,7 +177,12 @@ export interface PipelineRanking {
   created_at: string
 }
 
-export type ToolApprovalStatus = "pending" | "approved" | "rejected"
+// Mirrors backend/app/models/tool_approval.py's ToolApprovalStatus, the
+// single source of truth for this contract (there is no shared codegen in
+// this repo — see docs/DECISIONS.md). Keep these three files in sync:
+// backend/app/models/tool_approval.py, backend/app/schemas/tool_approval.py,
+// and this one.
+export type ToolApprovalStatus = "pending" | "claimed" | "approved" | "rejected"
 
 export interface ToolApprovalRequest {
   id: string
@@ -189,4 +194,13 @@ export interface ToolApprovalRequest {
   status: ToolApprovalStatus
   created_at: string
   resolved_at: string | null
+}
+
+// Response body for POST /api/tool-approvals/{id}/approve|reject. `resolved`
+// is always the approval request that was just acted on; `followup` is set
+// only when the resumed TrueForge turn immediately hit another approval
+// gate, in which case the pipeline is still paused and not "done".
+export interface ToolApprovalResolution {
+  resolved: ToolApprovalRequest
+  followup: ToolApprovalRequest | null
 }
