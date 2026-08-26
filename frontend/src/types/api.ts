@@ -186,10 +186,19 @@ export interface RankedLeadEntry {
   confidence: number
 }
 
+export interface SubagentDelegation {
+  status: "delegated" | "partial" | "evidence_unavailable" | "not_delegated"
+  used: boolean
+  subagent_count: number | null
+  expected_count: number
+  subagents: Record<string, unknown>[]
+}
+
 export interface PipelineRanking {
   id: string
   summary: string
   ranked_leads: RankedLeadEntry[]
+  subagent_delegation: SubagentDelegation | null
   created_at: string
 }
 

@@ -32,6 +32,7 @@ def run_pipeline_ranking(db: Session) -> PipelineRanking:
         agent_run_id=result.get("agent_run_id"),
         ranked_leads=result.get("ranking", []),
         summary=result.get("summary", ""),
+        subagent_delegation=result.get("subagent_delegation"),
     )
     db.add(ranking_row)
     db.commit()
