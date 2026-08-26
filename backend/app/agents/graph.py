@@ -41,6 +41,7 @@ class PipelineState(TypedDict, total=False):
     raw_signals: list[Signal]
     signal_extraction_result: dict[str, Any]
     persona_fit_result: dict[str, Any]
+    persona_fit_agent_run_id: str | None
     stage_result: dict[str, Any]
     requires_approval: bool
     plan_result: dict[str, Any] | None
@@ -53,8 +54,8 @@ def _node_signal_extraction(state: PipelineState) -> PipelineState:
 
 
 def _node_persona_fit(state: PipelineState) -> PipelineState:
-    result = run_persona_fit(state["db"], state["lead"], state.get("persona"), state.get("solution"))
-    return {"persona_fit_result": result}
+    result, agent_run_id = run_persona_fit(state["db"], state["lead"], state.get("persona"), state.get("solution"))
+    return {"persona_fit_result": result, "persona_fit_agent_run_id": agent_run_id}
 
 
 def _node_buying_stage(state: PipelineState) -> PipelineState:

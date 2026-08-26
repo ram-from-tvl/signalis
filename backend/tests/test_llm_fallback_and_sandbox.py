@@ -8,10 +8,10 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from app.agents.common import run_agent_reasoning
+from app.agents.common import AgentPausedForToolApproval, run_agent_reasoning
 from app.core.llm import LLMError, generate_json
 from app.core.sandbox import run_signal_scoring
-from app.core.trueforge import TrueForgeError, ensure_agent
+from app.core.trueforge import PendingToolApproval, TrueForgeError, ensure_agent, resume_turn, run_turn
 
 SCHEMA = {
     "type": "object",
@@ -149,80 +149,11 @@ def test_ensure_agent_treats_already_exists_conflict_as_success():
         ensure_agent("signalis-persona-fit", model="google-gemini/gemini-2-5-flash", instructions="x")
 
     # The already-exists path must PUT-update the manifest (not silently
-    # no-op), since config like a newly attached MCP server has to take
-    # effect on an agent that was already registered by an earlier run.
+    # no-op), since config like require_approval_for_tools or a newly
+    # attached MCP server has to take effect on an agent that was already
+    # registered by an earlier run.
     mock_put.assert_called_once()
     assert mock_put.call_args.args[0] == "http://localhost:8790/api/v1/agents/agent-123"
-
-
-def test_ensure_agent_updates_manifest_when_agent_already_exists():
-    """Regression test for the PUT-update fix: previously ensure_agent
-    treated 409-already-exists as a no-op, so config changes (like adding
-    the signalis-research MCP server to Persona Fit) never took effect on
-    an already-registered agent. It must now look up the agent id and PUT
-    the new manifest."""
-    create_conflict = MagicMock()
-    create_conflict.status_code = 409
-    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
-
-    list_response = MagicMock()
-    list_response.raise_for_status = MagicMock()
-    list_response.json.return_value = {"data": [{"id": "agent-123", "name": "signalis-persona-fit"}]}
-
-    put_response = MagicMock()
-    put_response.raise_for_status = MagicMock()
-
-    with patch("httpx.post", return_value=create_conflict), \
-        patch("httpx.get", return_value=list_response), \
-        patch("httpx.put", return_value=put_response) as mock_put:
-        ensure_agent(
-            "signalis-persona-fit",
-            model="google-gemini/gemini-2-5-flash",
-            instructions="x",
-            mcp_servers=[{"name": "signalis-research", "enable_tools": ["@all"]}],
-        )
-
-    mock_put.assert_called_once()
-    assert mock_put.call_args.args[0] == "http://localhost:8790/api/v1/agents/agent-123"
-    updated_manifest = mock_put.call_args.kwargs["json"]["manifest"]
-    assert {"name": "signalis-research", "enable_tools": ["@all"]} in updated_manifest["mcp_servers"]
-
-
-def test_ensure_agent_update_wraps_malformed_agent_list_as_trueforge_error():
-    """If the GET /api/v1/agents response has a non-list 'data' field (a
-    malformed dependency response), _update_agent must raise TrueForgeError
-    so run_agent_reasoning's fallback path can catch it, instead of letting
-    a raw TypeError/ValueError escape and kill the pipeline step."""
-    create_conflict = MagicMock()
-    create_conflict.status_code = 409
-    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
-
-    malformed_list_response = MagicMock()
-    malformed_list_response.raise_for_status = MagicMock()
-    malformed_list_response.json.return_value = {"data": "not-a-list"}
-
-    with patch("httpx.post", return_value=create_conflict), \
-        patch("httpx.get", return_value=malformed_list_response):
-        with pytest.raises(TrueForgeError):
-            ensure_agent("signalis-persona-fit", model="google-gemini/gemini-2-5-flash", instructions="x")
-
-
-def test_ensure_agent_update_wraps_invalid_json_as_trueforge_error():
-    """Invalid JSON in the agent-list response (json.JSONDecodeError, a
-    ValueError subclass) must also be wrapped as TrueForgeError."""
-    create_conflict = MagicMock()
-    create_conflict.status_code = 409
-    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
-
-    invalid_json_response = MagicMock()
-    invalid_json_response.raise_for_status = MagicMock()
-    invalid_json_response.json.side_effect = json.JSONDecodeError("bad json", "doc", 0)
-
-    with patch("httpx.post", return_value=create_conflict), \
-        patch("httpx.get", return_value=invalid_json_response):
-        with pytest.raises(TrueForgeError):
-            ensure_agent("signalis-persona-fit", model="google-gemini/gemini-2-5-flash", instructions="x")
-
 
 def test_ensure_agent_raises_on_genuine_error():
     fake_response = MagicMock()
@@ -251,6 +182,327 @@ def test_run_agent_reasoning_uses_trueforge_when_available():
     assert result == {"stage": "late", "confidence": 0.9}
     mock_ensure.assert_called_once()
     mock_turn.assert_called_once()
+
+
+def test_ensure_agent_updates_manifest_when_agent_already_exists():
+    """Regression test for the PUT-update fix: previously ensure_agent
+    treated 409-already-exists as a no-op, so config changes (like
+    require_approval_for_tools) never took effect on an already-registered
+    agent. It must now look up the agent id and PUT the new manifest."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
+
+    list_response = MagicMock()
+    list_response.raise_for_status = MagicMock()
+    list_response.json.return_value = {"data": [{"id": "agent-123", "name": "signalis-persona-fit"}]}
+
+    put_response = MagicMock()
+    put_response.raise_for_status = MagicMock()
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=list_response) as mock_get, \
+         patch("httpx.put", return_value=put_response) as mock_put:
+        ensure_agent(
+            "signalis-persona-fit",
+            model="google-gemini/gemini-2-5-flash",
+            instructions="x",
+            mcp_servers=[{"name": "signalis-enrichment", "require_approval_for_tools": ["classify_company_industry"]}],
+        )
+
+    mock_get.assert_called_once()
+    mock_put.assert_called_once()
+    put_url, put_kwargs = mock_put.call_args
+    assert put_url[0] == "http://localhost:8790/api/v1/agents/agent-123"
+    assert put_kwargs["json"]["manifest"]["mcp_servers"][0]["require_approval_for_tools"] == [
+        "classify_company_industry"
+    ]
+
+
+def test_update_agent_wraps_malformed_json_as_trueforge_error():
+    """Regression test for "Malformed responses bypass fallback": a
+    non-list `data` value (or invalid JSON) from GET /api/v1/agents used to
+    escape _update_agent as a raw TypeError/JSONDecodeError, which
+    run_agent_reasoning's `except TrueForgeError` fallback boundary doesn't
+    catch — turning a recoverable dependency response failure into an
+    unhandled 500 instead of falling back to the direct LLM call."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: some-agent"}}'
+
+    malformed_list_response = MagicMock()
+    malformed_list_response.raise_for_status = MagicMock()
+    malformed_list_response.json.return_value = {"data": "not-a-list"}
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=malformed_list_response):
+        with pytest.raises(TrueForgeError):
+            ensure_agent("some-agent", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+
+def test_update_agent_wraps_invalid_json_body_as_trueforge_error():
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: some-agent"}}'
+
+    invalid_json_response = MagicMock()
+    invalid_json_response.raise_for_status = MagicMock()
+    invalid_json_response.json.side_effect = json.JSONDecodeError("bad json", "doc", 0)
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=invalid_json_response):
+        with pytest.raises(TrueForgeError):
+            ensure_agent("some-agent", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+
+def test_run_agent_reasoning_falls_back_when_update_agent_returns_malformed_json():
+    """The end-to-end version of the two tests above: run_agent_reasoning's
+    fallback boundary (except TrueForgeError) must actually trigger for a
+    malformed dependency response, not just the low-level helper raising the
+    right exception type in isolation."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: some-agent"}}'
+
+    malformed_list_response = MagicMock()
+    malformed_list_response.raise_for_status = MagicMock()
+    malformed_list_response.json.return_value = {"data": None}
+
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=malformed_list_response), \
+         patch("app.core.llm._call_gemini_json", return_value={"stage": "mid", "confidence": 0.5}) as gemini:
+        mock_settings.return_value.trueforge_enabled = True
+        result = run_agent_reasoning(
+            trueforge_agent_name="some-agent",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction="reason",
+            prompt="data",
+            response_schema=SCHEMA,
+        )
+    assert result == {"stage": "mid", "confidence": 0.5}
+    gemini.assert_called_once()
+
+
+def test_poll_turn_wraps_malformed_state_as_trueforge_error():
+    from app.core.trueforge import _poll_turn_to_done
+
+    malformed_poll = MagicMock()
+    malformed_poll.raise_for_status = MagicMock()
+    malformed_poll.json.return_value = {"data": {"state": "not-a-dict"}}
+
+    with patch("httpx.get", return_value=malformed_poll):
+        with pytest.raises(TrueForgeError):
+            _poll_turn_to_done("some-agent", "sess-1", "turn-1")
+
+
+def test_resolve_turn_result_wraps_malformed_required_actions_as_trueforge_error():
+    from app.core.trueforge import _resolve_turn_result
+
+    # `tool_calls` inside a required_actions entry missing the expected
+    # "id" key used to raise a raw KeyError out of _extract_pending_approvals.
+    state = {
+        "status": "done",
+        "required_actions": [{"type": "tool.approval_required", "tool_calls": [{"not_id": "x"}]}],
+        "output": {"tool_calls": []},
+    }
+    with pytest.raises(TrueForgeError):
+        _resolve_turn_result("some-agent", "sess-1", "turn-1", state)
+
+
+def test_run_turn_returns_pending_approvals_when_turn_pauses():
+    """Regression test for the dead "requires_action" check: TrueForge
+    actually reports status == "done" with a populated required_actions
+    list when a turn pauses on a tool-approval gate, not a separate
+    "requires_action" status. run_turn must detect that shape and return
+    PendingToolApproval objects instead of raising or mis-parsing."""
+    session_resp = MagicMock()
+    session_resp.raise_for_status = MagicMock()
+    session_resp.json.return_value = {"data": {"id": "sess-1"}}
+
+    turn_create_resp = MagicMock()
+    turn_create_resp.raise_for_status = MagicMock()
+    turn_create_resp.json.return_value = {"data": {"id": "turn-1"}}
+
+    poll_resp = MagicMock()
+    poll_resp.raise_for_status = MagicMock()
+    poll_resp.json.return_value = {
+        "data": {
+            "state": {
+                "status": "done",
+                "output": {
+                    "type": "model.message",
+                    "thread_id": "main",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {
+                                "name": "classify_company_industry",
+                                "arguments": '{"company_name": "Acme Corp"}',
+                            },
+                        }
+                    ],
+                },
+                "required_actions": [
+                    {
+                        "type": "tool.approval_required",
+                        "thread_id": "main",
+                        "tool_calls": [{"id": "call-1", "source_event_id": "evt-1"}],
+                    }
+                ],
+                "completed_at": "2026-01-01T00:00:00Z",
+            }
+        }
+    }
+
+    with patch("httpx.post", side_effect=[session_resp, turn_create_resp]), \
+         patch("httpx.get", return_value=poll_resp):
+        result = run_turn("signalis-persona-fit", "assess fit")
+
+    assert isinstance(result, list)
+    assert len(result) == 1
+    pending = result[0]
+    assert isinstance(pending, PendingToolApproval)
+    assert pending.session_id == "sess-1"
+    assert pending.turn_id == "turn-1"
+    assert pending.thread_id == "main"
+    assert pending.tool_call_id == "call-1"
+    assert pending.tool_name == "classify_company_industry"
+    assert pending.tool_input == {"company_name": "Acme Corp"}
+
+
+def test_run_turn_returns_final_answer_when_no_pause():
+    session_resp = MagicMock()
+    session_resp.raise_for_status = MagicMock()
+    session_resp.json.return_value = {"data": {"id": "sess-2"}}
+
+    turn_create_resp = MagicMock()
+    turn_create_resp.raise_for_status = MagicMock()
+    turn_create_resp.json.return_value = {"data": {"id": "turn-2"}}
+
+    poll_resp = MagicMock()
+    poll_resp.raise_for_status = MagicMock()
+    poll_resp.json.return_value = {
+        "data": {
+            "state": {
+                "status": "done",
+                "output": {"content": '{"fit": "full_fit", "reasoning": "ok", "missing_data": []}'},
+                "required_actions": [],
+                "completed_at": "2026-01-01T00:00:00Z",
+            }
+        }
+    }
+
+    with patch("httpx.post", side_effect=[session_resp, turn_create_resp]), \
+         patch("httpx.get", return_value=poll_resp):
+        result = run_turn("signalis-persona-fit", "assess fit")
+
+    assert result == {"fit": "full_fit", "reasoning": "ok", "missing_data": []}
+
+
+def test_resume_turn_posts_tool_approval_and_returns_final_answer():
+    """Regression test for the resume payload shape: POST a new turn on the
+    same session with previous_turn_id: "auto" and a user.tool_approval
+    input item carrying thread_id/tool_call_id/approval — verified against
+    TrueForge's live openapi.json schema (UserToolApprovalEvent)."""
+    turn_resp = MagicMock()
+    turn_resp.raise_for_status = MagicMock()
+    turn_resp.json.return_value = {"data": {"id": "turn-3"}}
+
+    poll_resp = MagicMock()
+    poll_resp.raise_for_status = MagicMock()
+    poll_resp.json.return_value = {
+        "data": {
+            "state": {
+                "status": "done",
+                "output": {"content": '{"fit": "partial_fit", "reasoning": "resumed", "missing_data": []}'},
+                "required_actions": [],
+                "completed_at": "2026-01-01T00:00:00Z",
+            }
+        }
+    }
+
+    with patch("httpx.post", return_value=turn_resp) as mock_post, patch("httpx.get", return_value=poll_resp):
+        result = resume_turn(
+            "signalis-persona-fit",
+            session_id="sess-1",
+            thread_id="main",
+            tool_call_id="call-1",
+            approve=True,
+        )
+
+    assert result == {"fit": "partial_fit", "reasoning": "resumed", "missing_data": []}
+    _, kwargs = mock_post.call_args
+    payload = kwargs["json"]
+    assert payload["previous_turn_id"] == "auto"
+    assert payload["input"] == [
+        {
+            "type": "user.tool_approval",
+            "thread_id": "main",
+            "tool_call_id": "call-1",
+            "approval": {"status": "allow"},
+        }
+    ]
+
+
+def test_resume_turn_denies_with_reason():
+    turn_resp = MagicMock()
+    turn_resp.raise_for_status = MagicMock()
+    turn_resp.json.return_value = {"data": {"id": "turn-4"}}
+
+    poll_resp = MagicMock()
+    poll_resp.raise_for_status = MagicMock()
+    poll_resp.json.return_value = {
+        "data": {
+            "state": {
+                "status": "done",
+                "output": {"content": '{"fit": "mismatch", "reasoning": "denied", "missing_data": []}'},
+                "required_actions": [],
+                "completed_at": "2026-01-01T00:00:00Z",
+            }
+        }
+    }
+
+    with patch("httpx.post", return_value=turn_resp) as mock_post, patch("httpx.get", return_value=poll_resp):
+        resume_turn(
+            "signalis-persona-fit",
+            session_id="sess-1",
+            thread_id="main",
+            tool_call_id="call-1",
+            approve=False,
+            deny_reason="not needed",
+        )
+
+    _, kwargs = mock_post.call_args
+    assert kwargs["json"]["input"][0]["approval"] == {"status": "deny", "reason": "not needed"}
+
+
+def test_run_agent_reasoning_raises_agent_paused_when_turn_pauses():
+    pending = [
+        PendingToolApproval(
+            session_id="sess-1",
+            turn_id="turn-1",
+            thread_id="main",
+            tool_call_id="call-1",
+            tool_name="classify_company_industry",
+            tool_input={"company_name": "Acme"},
+        )
+    ]
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent"), \
+         patch("app.agents.common.run_turn", return_value=pending):
+        mock_settings.return_value.trueforge_enabled = True
+        with pytest.raises(AgentPausedForToolApproval) as exc_info:
+            run_agent_reasoning(
+                trueforge_agent_name="signalis-persona-fit",
+                model="google-gemini/gemini-2-5-flash",
+                system_instruction="assess fit",
+                prompt="lead data",
+                response_schema=SCHEMA,
+                mcp_servers=[{"name": "signalis-enrichment"}],
+            )
+    assert exc_info.value.pending == pending
 
 
 def test_run_agent_reasoning_falls_back_and_strips_tool_references_when_mcp_configured():
