@@ -124,7 +124,8 @@ def run_agent_reasoning_with_delegations(
     prompt: str,
     response_schema: dict[str, Any],
     temperature: float = 0.3,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    fallback_instruction: str | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]] | None, bool]:
     """Like `run_agent_reasoning`, but also returns the list of genuine
     TrueForge subagent delegations (`create_sub_agent` calls) the root
     agent's turn performed, as recorded on TrueForge's own session event
@@ -138,8 +139,29 @@ def run_agent_reasoning_with_delegations(
     runtime feature with no equivalent in the direct Gemini/HF fallback, so
     when TrueForge is disabled/unreachable this falls back to
     `run_agent_reasoning` with an empty delegations list, exactly like every
-    other agent's fallback behavior (same prompt/schema, just without the
-    TrueForge session wrapper or subagent capability).
+    other agent's fallback behavior.
+
+    Unlike the plain single-phase agents, the Prioritization system
+    instruction *unconditionally mandates* the model call `create_sub_agent`
+    — a tool that simply does not exist on the direct Gemini/HF fallback
+    path. Reusing that instruction verbatim on the fallback (the way
+    `run_agent_reasoning` reuses tool-referencing instructions only when
+    `mcp_servers` is set) would make the model either answer incoherently
+    or silently produce a non-delegated ranking that looks identical to a
+    genuine delegated one. So callers whose instruction mandates delegation
+    must pass `fallback_instruction` — a rewritten version of
+    `system_instruction` that tells the model no subagent delegation tool
+    is available on this call and it must reason about every item directly
+    in this one turn instead. When that happens, this function returns
+    `is_delegated=False` alongside an empty delegations list so the caller
+    can mark the resulting output as degraded/non-delegated rather than
+    letting it look identical to a genuine delegated run.
+
+    Returns `(output, delegations, is_delegated)`, where `is_delegated` is
+    True only for a genuine TrueForge turn (delegation may still be empty
+    if the model chose not to delegate for a very small item count — that
+    is a model-behavior question the caller resolves via Finding 4's count
+    check, not a transport question this function answers).
     """
     settings = get_settings()
     if settings.trueforge_enabled:
@@ -153,7 +175,7 @@ def run_agent_reasoning_with_delegations(
                 ),
             )
             output, delegations = run_turn(trueforge_agent_name, prompt, with_delegations=True)
-            return output, delegations
+            return output, delegations, True
         except TrueForgeError as exc:
             logger.warning(
                 "TrueForge call failed for %s, falling back to direct LLM call "
@@ -162,13 +184,14 @@ def run_agent_reasoning_with_delegations(
                 exc,
             )
 
+    effective_instruction = fallback_instruction if fallback_instruction is not None else system_instruction
     try:
         output = generate_json(
-            system_instruction=system_instruction,
+            system_instruction=effective_instruction,
             prompt=prompt,
             response_schema=response_schema,
             temperature=temperature,
         )
-        return output, []
+        return output, [], False
     except LLMError as exc:
         raise LLMError(f"Agent {trueforge_agent_name} reasoning failed: {exc}") from exc

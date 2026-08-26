@@ -46,6 +46,7 @@ from sqlalchemy.orm import Session
 from app.agents.common import finish_run, run_agent_reasoning_with_delegations, start_run
 from app.core.config import get_settings
 from app.core.llm import LLMError
+from app.core.trueforge import TrueForgeError
 from app.models import Lead, StageClassification
 
 logger = logging.getLogger("signalis.agents")
@@ -74,6 +75,31 @@ can outrank a low-confidence late-stage lead) — use the subagents' priority_sc
 input to this judgment, not as the final answer by itself. For every lead, give a short, specific
 final reason for its rank a rep could read in five seconds — not a repeat of the stage label and
 not a verbatim copy of the subagent's reasoning. Include every lead you are given, exactly once,
+with no gaps or duplicate ranks."""
+
+# SYSTEM_INSTRUCTION above unconditionally mandates a create_sub_agent tool
+# call per lead, but that tool only exists on the TrueForge path. When
+# run_agent_reasoning_with_delegations falls back to a direct Gemini/HF
+# call, it substitutes this instruction instead of reusing SYSTEM_INSTRUCTION
+# verbatim, so the model is never told to call a tool that isn't there for
+# this call. The two-phase framing (delegate, then consolidate) is dropped
+# entirely in favor of a single direct assessment across all leads at once,
+# and the model is explicitly told the difference matters so the resulting
+# degraded/non-delegated ranking is not indistinguishable from a genuine
+# two-phase delegated one in the model's own reasoning/output.
+FALLBACK_SYSTEM_INSTRUCTION = """You are the Prioritization/Ranking Agent inside a B2B sales intelligence
+system. You are given every lead currently in the pipeline with its buying stage, confidence
+score, and stage justification. Produce a single priority order across ALL of them — rank 1 is
+who a rep should contact first today.
+
+No subagent delegation is available for this request. Reason about every lead yourself, directly,
+in this one call — do not reference, attempt to call, or claim to have used any subagent or tool.
+
+Weigh buying stage most heavily (late beats mid beats early), but let confidence and justification
+break ties or override a naive stage-only ordering when the evidence clearly calls for it (e.g. a
+high-confidence mid-stage lead with an urgent, time-sensitive signal can outrank a low-confidence
+late-stage lead). For every lead, give a short, specific final reason for its rank a rep could read
+in five seconds — not a repeat of the stage label. Include every lead you are given, exactly once,
 with no gaps or duplicate ranks."""
 
 # With per-lead assessment now delegated to parallel TrueForge subagents,
@@ -203,15 +229,23 @@ def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead,
     }
 
     try:
-        result, delegations = run_agent_reasoning_with_delegations(
+        result, delegations, is_delegated = run_agent_reasoning_with_delegations(
             trueforge_agent_name="signalis-prioritization",
             model=get_settings().trueforge_model,
             system_instruction=SYSTEM_INSTRUCTION,
+            fallback_instruction=FALLBACK_SYSTEM_INSTRUCTION,
             prompt=prompt,
             response_schema=schema,
             temperature=0.2,
         )
-    except LLMError as exc:
+    except (LLMError, TrueForgeError) as exc:
+        # TrueForgeError reaches here from a malformed/unexpected session
+        # events payload during a delegation-evidence fetch that failed hard
+        # enough to not be swallowed as "unavailable" (see
+        # app.core.trueforge._get_session_events / run_turn) or from any
+        # other TrueForge failure not already handled by the fallback path
+        # in run_agent_reasoning_with_delegations. Either way the run must
+        # be marked failed rather than left stuck in "running" forever.
         finish_run(db, run, output={"error": str(exc)}, reasoning=str(exc), status="failed")
         raise
 
@@ -227,15 +261,50 @@ def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead,
 
     # Real evidence of subagent delegation for the trace, not just the
     # model's self-report: how many per-lead subagents TrueForge's own
-    # session events recorded actually ran, and how long each took. Empty
-    # when TrueForge was unreachable and the call fell back to a direct LLM
-    # call (no subagent capability on that path), or if the model chose not
-    # to delegate for a very small lead count.
+    # session events recorded actually ran, and how long each took.
+    #
+    # Three distinct states, all made visible on the persisted output rather
+    # than collapsed into a single "used" bool:
+    #   - not delegated: the call never reached TrueForge at all (fell back
+    #     to the direct LLM path, which has no subagent capability — see
+    #     FALLBACK_SYSTEM_INSTRUCTION above). `delegations` is always [] here.
+    #   - delegation evidence unavailable: a genuine TrueForge turn
+    #     completed successfully, but fetching the session events used to
+    #     verify delegation failed (see trueforge.run_turn). We still have a
+    #     valid ranking; we just can't prove how it was produced.
+    #   - delegated (full or partial): a genuine TrueForge turn completed
+    #     and event evidence was fetched. "full" means the delegation count
+    #     matches the lead count, exactly as the system prompt mandates one
+    #     subagent per lead; anything less (including zero) is "partial" —
+    #     silently accepting a partially-delegated response as equivalent to
+    #     a fully delegated one would hide a real outage or a model that
+    #     ignored the delegation instruction.
+    if not is_delegated:
+        status = "not_delegated"
+    elif delegations is None:
+        status = "evidence_unavailable"
+    elif len(delegations) >= len(leads_with_classifications) and len(leads_with_classifications) > 0:
+        status = "delegated"
+    else:
+        status = "partial"
+
+    subagent_count = len(delegations) if delegations is not None else None
     result["subagent_delegation"] = {
-        "used": len(delegations) > 0,
-        "subagent_count": len(delegations),
-        "subagents": delegations,
+        "status": status,
+        # Kept for backward compatibility with any existing reader of this
+        # field: True only for a genuinely, fully delegated run.
+        "used": status == "delegated",
+        "subagent_count": subagent_count,
+        "expected_count": len(leads_with_classifications),
+        "subagents": delegations if delegations is not None else [],
     }
+    if status == "partial":
+        logger.warning(
+            "Prioritization agent delegated %s/%d leads to subagents; expected exactly one "
+            "subagent per lead. Marking this run's delegation as partial.",
+            subagent_count,
+            len(leads_with_classifications),
+        )
 
     finish_run(db, run, output=result, reasoning=result.get("summary", ""))
     return result

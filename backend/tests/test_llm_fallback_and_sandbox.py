@@ -11,7 +11,13 @@ import pytest
 from app.agents.common import run_agent_reasoning, run_agent_reasoning_with_delegations
 from app.core.llm import LLMError, generate_json
 from app.core.sandbox import run_signal_scoring
-from app.core.trueforge import TrueForgeError, _extract_subagent_delegations, ensure_agent
+from app.core.trueforge import (
+    TrueForgeError,
+    _extract_subagent_delegations,
+    _get_session_events,
+    ensure_agent,
+    run_turn,
+)
 
 SCHEMA = {
     "type": "object",
@@ -264,7 +270,7 @@ def test_run_agent_reasoning_with_delegations_returns_real_subagent_evidence():
              return_value=({"ranking": [], "summary": "ok"}, fake_delegations),
          ) as mock_turn:
         mock_settings.return_value.trueforge_enabled = True
-        output, delegations = run_agent_reasoning_with_delegations(
+        output, delegations, is_delegated = run_agent_reasoning_with_delegations(
             trueforge_agent_name="signalis-prioritization",
             model="google-gemini/gemini-2-5-flash",
             system_instruction="rank leads, delegating per-lead assessment to subagents",
@@ -273,6 +279,7 @@ def test_run_agent_reasoning_with_delegations_returns_real_subagent_evidence():
         )
     assert output == {"ranking": [], "summary": "ok"}
     assert delegations == fake_delegations
+    assert is_delegated is True
     mock_ensure.assert_called_once()
     mock_turn.assert_called_once_with(
         "signalis-prioritization", "lead data", with_delegations=True
@@ -287,7 +294,7 @@ def test_run_agent_reasoning_with_delegations_falls_back_with_no_subagents():
          patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
          patch("app.agents.common.generate_json", return_value={"ranking": [], "summary": "fallback"}):
         mock_settings.return_value.trueforge_enabled = True
-        output, delegations = run_agent_reasoning_with_delegations(
+        output, delegations, is_delegated = run_agent_reasoning_with_delegations(
             trueforge_agent_name="signalis-prioritization",
             model="google-gemini/gemini-2-5-flash",
             system_instruction="rank leads",
@@ -295,4 +302,131 @@ def test_run_agent_reasoning_with_delegations_falls_back_with_no_subagents():
             response_schema=SCHEMA,
         )
     assert output == {"ranking": [], "summary": "fallback"}
+    assert delegations == []
+    assert is_delegated is False
+
+
+def test_run_agent_reasoning_with_delegations_falls_back_uses_fallback_instruction():
+    """Regression test for the Qodo finding: the fallback path has no
+    create_sub_agent tool, so a caller-supplied fallback_instruction (which
+    should strip/replace the delegation mandate) must be what actually
+    reaches generate_json on the fallback path, not the original
+    tool-mandating system_instruction."""
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
+         patch("app.agents.common.generate_json", return_value={"ranking": [], "summary": "fallback"}) as mock_generate:
+        mock_settings.return_value.trueforge_enabled = True
+        run_agent_reasoning_with_delegations(
+            trueforge_agent_name="signalis-prioritization",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction="rank leads; you MUST call create_sub_agent for every lead",
+            fallback_instruction="rank leads; no subagent delegation is available, reason directly",
+            prompt="lead data",
+            response_schema=SCHEMA,
+        )
+    mock_generate.assert_called_once()
+    assert mock_generate.call_args.kwargs["system_instruction"] == (
+        "rank leads; no subagent delegation is available, reason directly"
+    )
+
+
+def _fake_response(*, json_side_effect=None, json_return=None, status_ok=True):
+    resp = MagicMock()
+    resp.raise_for_status = MagicMock()
+    if not status_ok:
+        resp.raise_for_status.side_effect = httpx.HTTPStatusError("bad status", request=MagicMock(), response=MagicMock())
+    if json_side_effect is not None:
+        resp.json.side_effect = json_side_effect
+    else:
+        resp.json.return_value = json_return
+    return resp
+
+
+def test_get_session_events_raises_trueforge_error_on_invalid_json():
+    """Regression test for the Qodo finding: a response body that isn't
+    valid JSON must raise TrueForgeError (json.JSONDecodeError was
+    previously uncaught), not escape as a raw exception."""
+    bad_response = _fake_response(json_side_effect=json.JSONDecodeError("bad json", "not json", 0))
+    with patch("httpx.get", return_value=bad_response):
+        with pytest.raises(TrueForgeError):
+            _get_session_events("session-1")
+
+
+def test_get_session_events_raises_trueforge_error_on_missing_data_key():
+    """A well-formed JSON body missing the expected 'data' key must also
+    raise TrueForgeError rather than a raw KeyError escaping upward."""
+    response = _fake_response(json_return={"unexpected": "shape"})
+    with patch("httpx.get", return_value=response):
+        with pytest.raises(TrueForgeError):
+            _get_session_events("session-1")
+
+
+def test_get_session_events_raises_trueforge_error_on_non_list_data():
+    """Regression test for the Qodo finding: _extract_subagent_delegations
+    assumes every event is a dict; a 'data' field that isn't a list of dicts
+    (e.g. a string, or a list of non-dict items) must be rejected here
+    rather than raising deeper in _extract_subagent_delegations."""
+    response = _fake_response(json_return={"data": "not-a-list"})
+    with patch("httpx.get", return_value=response):
+        with pytest.raises(TrueForgeError):
+            _get_session_events("session-1")
+
+    response2 = _fake_response(json_return={"data": [1, 2, 3]})
+    with patch("httpx.get", return_value=response2):
+        with pytest.raises(TrueForgeError):
+            _get_session_events("session-1")
+
+
+def test_get_session_events_returns_valid_list_of_dicts():
+    response = _fake_response(json_return={"data": [{"event": {"type": "thread.created", "thread_id": "t1"}}]})
+    with patch("httpx.get", return_value=response):
+        events = _get_session_events("session-1")
+    assert events == [{"event": {"type": "thread.created", "thread_id": "t1"}}]
+
+
+def _mock_session_and_turn_responses(output_content: str):
+    session_resp = MagicMock()
+    session_resp.raise_for_status = MagicMock()
+    session_resp.json.return_value = {"data": {"id": "session-1"}}
+
+    turn_start_resp = MagicMock()
+    turn_start_resp.raise_for_status = MagicMock()
+    turn_start_resp.json.return_value = {"data": {"id": "turn-1"}}
+
+    poll_resp = MagicMock()
+    poll_resp.raise_for_status = MagicMock()
+    poll_resp.json.return_value = {
+        "data": {"state": {"status": "done", "output": {"content": output_content}}}
+    }
+    return session_resp, turn_start_resp, poll_resp
+
+
+def test_run_turn_returns_successful_ranking_when_events_fetch_fails():
+    """Regression test for the Qodo finding: run_turn's own turn success/
+    failure must be judged independently of the session-events fetch used
+    for delegation evidence. If the turn completes and parses successfully
+    but the events fetch fails, run_turn must NOT raise (which would force
+    a full, possibly-different rerun via the fallback) — it must return the
+    successful output with delegations=None as an explicit 'evidence
+    unavailable' sentinel, distinct from an empty list meaning no
+    delegation occurred."""
+    session_resp, turn_start_resp, poll_resp = _mock_session_and_turn_responses('{"ranking": [], "summary": "ok"}')
+
+    with patch("httpx.post", side_effect=[session_resp, turn_start_resp]), \
+         patch("httpx.get", side_effect=[poll_resp, httpx.ConnectError("events endpoint down")]):
+        output, delegations = run_turn("signalis-prioritization", "rank these leads", with_delegations=True)
+
+    assert output == {"ranking": [], "summary": "ok"}
+    assert delegations is None
+
+
+def test_run_turn_returns_delegations_when_events_fetch_succeeds():
+    session_resp, turn_start_resp, poll_resp = _mock_session_and_turn_responses('{"ranking": [], "summary": "ok"}')
+    events_resp = _fake_response(json_return={"data": []})
+
+    with patch("httpx.post", side_effect=[session_resp, turn_start_resp]), \
+         patch("httpx.get", side_effect=[poll_resp, events_resp]):
+        output, delegations = run_turn("signalis-prioritization", "rank these leads", with_delegations=True)
+
+    assert output == {"ranking": [], "summary": "ok"}
     assert delegations == []

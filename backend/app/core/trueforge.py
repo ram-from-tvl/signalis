@@ -9,6 +9,7 @@ locally (see README) before agents can execute.
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 import time
 from typing import Any
@@ -63,12 +64,41 @@ def ensure_agent(name: str, *, model: str, instructions: str, mcp_servers: list[
 
 
 def _get_session_events(session_id: str) -> list[dict[str, Any]]:
+    """Fetch and validate the raw event list for a session.
+
+    Raises TrueForgeError for any failure mode: transport/HTTP failure,
+    non-JSON body, a JSON body missing the expected "data" key, or a "data"
+    value that isn't a list of dicts. `_extract_subagent_delegations` calls
+    `.get()` on every element assuming it's a dict, so an unexpected shape
+    must be caught here rather than surfacing as an uncaught TypeError/
+    AttributeError deeper in the pipeline.
+    """
     try:
         resp = httpx.get(f"{_base_url()}/api/v1/sessions/{session_id}/events", timeout=15.0)
         resp.raise_for_status()
-        return resp.json()["data"]
-    except (httpx.HTTPError, KeyError) as exc:
+    except httpx.HTTPError as exc:
         raise TrueForgeError(f"Failed to fetch TrueForge session events for {session_id}: {exc}") from exc
+
+    try:
+        body = resp.json()
+    except json.JSONDecodeError as exc:
+        raise TrueForgeError(
+            f"TrueForge session events response for {session_id} was not valid JSON: {exc}"
+        ) from exc
+
+    try:
+        data = body["data"]
+    except (KeyError, TypeError) as exc:
+        raise TrueForgeError(
+            f"TrueForge session events response for {session_id} is missing the expected 'data' field: {exc}"
+        ) from exc
+
+    if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
+        raise TrueForgeError(
+            f"TrueForge session events response for {session_id} had an unexpected shape "
+            f"(expected a list of objects): {data!r}"
+        )
+    return data
 
 
 def _extract_subagent_delegations(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -116,7 +146,7 @@ def _extract_subagent_delegations(events: list[dict[str, Any]]) -> list[dict[str
     return delegations
 
 
-def run_turn(agent_name: str, message: str, *, with_delegations: bool = False) -> dict[str, Any] | tuple[dict[str, Any], list[dict[str, Any]]]:
+def run_turn(agent_name: str, message: str, *, with_delegations: bool = False) -> dict[str, Any] | tuple[dict[str, Any], list[dict[str, Any]] | None]:
     """Run one user-message turn against a named TrueForge agent and return
     the parsed JSON object from the model's final response.
 
@@ -126,8 +156,19 @@ def run_turn(agent_name: str, message: str, *, with_delegations: bool = False) -
     delegations TrueForge itself recorded for this turn (empty if the model
     chose not to delegate) — see ``_extract_subagent_delegations``.
 
-    Raises TrueForgeError on any transport failure, a turn that ends in
-    error/needs-approval-forever, or non-JSON model output.
+    The turn's own success is judged independently of that events fetch: if
+    the turn completes and parses successfully but the *subsequent*,
+    purely-observability events fetch fails (see ``_get_session_events``),
+    this does NOT raise — a metadata-fetch failure must never discard an
+    otherwise-valid ranking and force the caller into a full (possibly
+    different) rerun. Instead it returns the successful output with
+    ``subagent_delegations=None``, a sentinel distinct from "no delegation
+    occurred" (``[]``) that callers should persist as "delegation evidence
+    unavailable/error", not silently treat as zero delegations.
+
+    Raises TrueForgeError on any transport failure for the turn itself, a
+    turn that ends in error/needs-approval-forever, or non-JSON model
+    output. A failure to fetch/parse the events stream never raises here.
     """
     try:
         session_resp = httpx.post(
@@ -170,7 +211,18 @@ def run_turn(agent_name: str, message: str, *, with_delegations: bool = False) -
             if parsed is None:
                 raise TrueForgeError(f"TrueForge agent {agent_name} returned non-JSON output: {content!r}")
             if with_delegations:
-                delegations = _extract_subagent_delegations(_get_session_events(session_id))
+                try:
+                    events = _get_session_events(session_id)
+                except TrueForgeError as exc:
+                    logger.warning(
+                        "TrueForge turn for %s completed successfully, but fetching session "
+                        "events for delegation evidence failed; returning the successful "
+                        "ranking with delegation evidence marked unavailable: %s",
+                        agent_name,
+                        exc,
+                    )
+                    return parsed, None
+                delegations = _extract_subagent_delegations(events)
                 return parsed, delegations
             return parsed
         if status == "error":
