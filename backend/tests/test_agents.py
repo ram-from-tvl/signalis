@@ -18,7 +18,7 @@ from app.models import Persona, Solution
 def test_buying_stage_confidence_is_clamped_to_valid_range(db_session, sample_lead):
     with patch(
         "app.agents.buying_stage.run_agent_reasoning",
-        return_value={"stage": "late", "confidence": 1.7, "justification": "test"},
+        return_value=({"stage": "late", "confidence": 1.7, "justification": "test"}, "session-abc"),
     ), patch(
         "app.agents.buying_stage.run_signal_scoring",
         return_value=({"weighted_score": 2.1, "signal_count": 2}, "local"),
@@ -31,7 +31,7 @@ def test_buying_stage_confidence_is_clamped_to_valid_range(db_session, sample_le
 def test_buying_stage_confidence_clamped_when_negative(db_session, sample_lead):
     with patch(
         "app.agents.buying_stage.run_agent_reasoning",
-        return_value={"stage": "early", "confidence": -0.3, "justification": "test"},
+        return_value=({"stage": "early", "confidence": -0.3, "justification": "test"}, "session-def"),
     ), patch(
         "app.agents.buying_stage.run_signal_scoring",
         return_value=({"weighted_score": 1.0, "signal_count": 2}, "local"),
@@ -78,7 +78,7 @@ def test_outreach_plan_has_expected_shape(db_session, sample_lead):
         "channels": ["email", "linkedin"],
         "summary": "A short plan.",
     }
-    with patch("app.agents.outreach_planner.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-ghi")):
         result = run_outreach_planner(
             db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution
         )
@@ -110,7 +110,7 @@ def test_outreach_planner_registers_and_attaches_copywriting_skill(db_session, s
 
     with patch("app.agents.outreach_planner.get_settings") as mock_settings, \
          patch("app.agents.outreach_planner.ensure_skill") as mock_ensure_skill, \
-         patch("app.agents.outreach_planner.run_agent_reasoning", return_value=mocked_response) as mock_reasoning:
+         patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-abc")) as mock_reasoning:
         mock_settings.return_value.trueforge_enabled = True
         mock_settings.return_value.trueforge_model = "google-gemini/gemini-2-5-flash"
         run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution)
@@ -137,7 +137,7 @@ def test_outreach_planner_skips_skill_registration_when_trueforge_disabled(db_se
 
     with patch("app.agents.outreach_planner.get_settings") as mock_settings, \
          patch("app.agents.outreach_planner.ensure_skill") as mock_ensure_skill, \
-         patch("app.agents.outreach_planner.run_agent_reasoning", return_value=mocked_response) as mock_reasoning:
+         patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-abc")) as mock_reasoning:
         mock_settings.return_value.trueforge_enabled = False
         mock_settings.return_value.trueforge_model = "google-gemini/gemini-2-5-flash"
         run_outreach_planner(db_session, sample_lead, "early", 0.3, {"fit": "partial_fit"}, None, None)
@@ -169,7 +169,7 @@ def test_outreach_planner_injects_condensed_guidance_when_skill_registration_fai
 
     with patch("app.agents.outreach_planner.get_settings") as mock_settings, \
          patch("app.agents.outreach_planner.ensure_skill", side_effect=RuntimeError("TrueForge 500")), \
-         patch("app.agents.outreach_planner.run_agent_reasoning", return_value=mocked_response) as mock_reasoning:
+         patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-abc")) as mock_reasoning:
         mock_settings.return_value.trueforge_enabled = True
         mock_settings.return_value.trueforge_model = "google-gemini/gemini-2-5-flash"
         run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution)
@@ -240,7 +240,10 @@ def test_condensed_style_guidance_covers_core_craft_points():
 def test_persona_fit_handles_missing_persona_and_solution(db_session, sample_lead):
     with patch(
         "app.agents.persona_fit.run_agent_reasoning",
-        return_value={"fit": "partial_fit", "reasoning": "no persona defined", "missing_data": ["persona"]},
+        return_value=(
+            {"fit": "partial_fit", "reasoning": "no persona defined", "missing_data": ["persona"]},
+            "session-jkl",
+        ),
     ):
         result, agent_run_id = run_persona_fit(db_session, sample_lead, None, None)
     assert result["fit"] == "partial_fit"
@@ -307,7 +310,7 @@ def test_run_persona_fit_starts_fresh_once_prior_result_is_consumed(db_session, 
 
     with patch(
         "app.agents.persona_fit.run_agent_reasoning",
-        return_value={"fit": "mismatch", "reasoning": "fresh run", "missing_data": []},
+        return_value=({"fit": "mismatch", "reasoning": "fresh run", "missing_data": []}, "sess-fresh"),
     ) as mock_reasoning:
         result, agent_run_id = run_persona_fit(db_session, sample_lead, None, None)
 

@@ -86,7 +86,7 @@ def run_signal_extraction(db: Session, lead: Lead, signals: list[Signal]) -> dic
     }
 
     try:
-        result = run_agent_reasoning(
+        result, session_id = run_agent_reasoning(
             trueforge_agent_name="signalis-signal-extraction",
             model=get_settings().trueforge_model,
             system_instruction=SYSTEM_INSTRUCTION,
@@ -114,5 +114,6 @@ def run_signal_extraction(db: Session, lead: Lead, signals: list[Signal]) -> dic
         run,
         output=result,
         reasoning=result.get("summary", "Signals classified."),
+        trueforge_session_id=session_id,
     )
     return result

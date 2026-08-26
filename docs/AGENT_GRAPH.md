@@ -133,12 +133,19 @@ Each node function in `app/agents/graph.py` calls its corresponding agent
 module (`app/agents/signal_extraction.py`, etc.), which in turn calls
 `app.agents.common.run_agent_reasoning`. That function is the actual
 TrueForge integration point: it registers a named TrueForge agent (once,
-idempotently) with the node's system instruction and model, starts a
-session, runs one turn with the node's prompt, and polls until the turn
-completes or errors. The registered instruction always embeds the node's
-JSON response schema directly, so TrueForge's model call — whichever
-provider it is actually routed to — returns exactly the structured shape the
-rest of the pipeline expects.
+idempotently) with the node's system instruction and model, starts a new
+session (`app.core.trueforge.run_turn`), runs one turn with the node's
+prompt, and polls until the turn completes or errors. The registered
+instruction always embeds the node's JSON response schema directly, so
+TrueForge's model call — whichever provider it is actually routed to —
+returns exactly the structured shape the rest of the pipeline expects.
+`run_agent_reasoning` returns `(parsed_result, trueforge_session_id)`; every
+one of the six agent modules persists that session id onto its `AgentRun`
+row (`agent_runs.trueforge_session_id`, nullable) via `finish_run`. The
+session id is `None` whenever the direct-Gemini/Hugging-Face fallback path
+was used instead, since that path never creates a TrueForge session — see
+"Follow-up questions on an agent run's own reasoning" below for what that
+persisted session id is actually for.
 
 If TrueForge is disabled (`TRUEFORGE_ENABLED=false`) or unreachable, the same
 call falls back to a direct Gemini call and then a Hugging Face call
@@ -199,6 +206,41 @@ the now-unblocked Persona Fit result already on record. Full mid-pipeline
 resumption would require checkpointing and replaying partial LangGraph state
 across an HTTP round trip, which is materially heavier than this feature's
 scope justifies; this was a deliberate, documented choice, not an oversight.
+
+## Follow-up questions on an agent run's own reasoning
+
+A marketer reading the Agent Trace tab can ask a natural-language follow-up
+question against any single trace entry that ran through TrueForge — e.g.
+"why wasn't this lead classified as late-stage?" or "what would change your
+mind about this lead's persona fit?" — and get back an answer that is
+genuinely grounded in that agent's own prior reasoning, not a fresh
+one-shot call re-fed a summary of it.
+
+This works because TrueForge sessions are a real runtime feature
+independent of Signalis's own database: TrueForge persists a session's full
+turn history in its own SQLite store, and that history survives regardless
+of what Signalis does with the session id afterward. Every prior integration
+in this codebase (`run_turn`) created a new session for every single call
+and discarded the session id once the turn finished — genuinely stateless
+from TrueForge's perspective, even though TrueForge itself supports true
+multi-turn conversations. `POST /api/leads/{lead_id}/agent-runs/{agent_run_id}/ask`
+(`app/api/routes/agent_followups.py`) is what actually exploits that
+capability: it looks up the run's persisted `trueforge_session_id` and calls
+`app.core.trueforge.run_followup_turn(session_id, message)`, which posts
+directly to `/api/v1/sessions/{session_id}/turns` — never
+`POST /api/v1/sessions` — so the model answers as a continuation of the
+exact conversation that produced the original structured output, with that
+output still genuinely in its own context.
+
+If the run's `trueforge_session_id` is null (the fallback-to-direct-Gemini
+path was used, or TrueForge was disabled/unreachable for that run), the
+endpoint returns `409 Conflict` rather than silently answering statelessly
+or crashing — a follow-up without the original session would not actually
+be "the model remembering its prior reasoning," so the endpoint says so
+explicitly instead of faking it. Every question/answer pair is persisted as
+an append-only `agent_run_followups` row (see `docs/DATA_SCHEMA.md`) so a
+marketer's follow-up history for a trace entry survives a page reload, and
+is listable via `GET /api/leads/{lead_id}/agent-runs/{agent_run_id}/followups`.
 
 ## Re-running the graph
 

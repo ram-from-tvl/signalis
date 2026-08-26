@@ -118,6 +118,21 @@ def ensure_agent(
         raise TrueForgeError(f"Failed to register TrueForge agent {name}: {exc}") from exc
 
 
+def _start_turn(session_id: str, message: str, *, label: str) -> str:
+    """POST one user-message turn onto an already-existing session and
+    return the new turn's id."""
+    try:
+        turn_resp = httpx.post(
+            f"{_base_url()}/api/v1/sessions/{session_id}/turns",
+            json={"stream": False, "input": [{"type": "user.message", "content": message}]},
+            timeout=30.0,
+        )
+        turn_resp.raise_for_status()
+        return turn_resp.json()["data"]["id"]
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise TrueForgeError(f"Failed to start TrueForge turn for {label}: {exc}") from exc
+
+
 def _update_agent(name: str, manifest: dict[str, Any], *, skills_explicit: bool) -> None:
     """PUT-updates an already-registered agent's manifest so config changes
     (e.g. require_approval_for_tools, a newly attached MCP server, or this
@@ -221,8 +236,8 @@ def ensure_skill(
 
 def _poll_turn_to_done(agent_name: str, session_id: str, turn_id: str) -> dict[str, Any]:
     """Polls a turn until it reaches a terminal `status == "done"` state and
-    returns that state's raw dict. Shared by `run_turn` and `resume_turn` so
-    there is exactly one poll loop.
+    returns that state's raw dict. Shared by `run_turn`, `run_followup_turn`,
+    and `resume_turn` so there is exactly one poll loop.
 
     Note: TrueForge's `"done"` status means "the turn finished running" —
     it does NOT mean "the turn produced a final answer". A turn paused on a
@@ -411,21 +426,29 @@ def _extract_subagent_delegations(events: list[dict[str, Any]]) -> list[dict[str
 
 def run_turn(
     agent_name: str, message: str, *, with_delegations: bool = False
-) -> dict[str, Any] | list[PendingToolApproval] | tuple[dict[str, Any] | list[PendingToolApproval], list[dict[str, Any]] | None]:
-    """Run one user-message turn against a named TrueForge agent.
-
-    Returns the parsed JSON object from the model's final response, or — if
-    the turn paused on a `require_approval_for_tools` gate — a list of
+) -> (
+    tuple[dict[str, Any] | list[PendingToolApproval], str]
+    | tuple[dict[str, Any] | list[PendingToolApproval], str, list[dict[str, Any]] | None]
+):
+    """Create a brand-new TrueForge session, run one user-message turn on
+    it, and return the parsed JSON object from the model's final response —
+    or, if the turn paused on a `require_approval_for_tools` gate — a list of
     `PendingToolApproval` describing the tool call(s) awaiting a human
-    decision. Callers that don't expect a pause (most agents, which have no
+    decision — together with the session_id that produced it.
+
+    Callers that don't expect a pause (most agents, which have no
     approval-gated tools) will simply never see the list case.
 
-    If ``with_delegations`` is True, also fetches the session's event stream
-    and returns ``(result, subagent_delegations)``, where ``result`` is the
-    parsed output or pending-approval list above, and ``subagent_delegations``
-    is a list of genuine ``create_sub_agent`` delegations TrueForge itself
-    recorded for this turn (empty if the model chose not to delegate) — see
-    ``_extract_subagent_delegations``.
+    The session_id is always returned (rather than discarded) so callers can
+    persist it and later resume genuine conversational memory of this turn
+    via run_followup_turn or resume_turn — TrueForge keeps this session's
+    state in its own store independent of this call returning.
+
+    If ``with_delegations`` is True, a third element is also returned:
+    ``(result, session_id, subagent_delegations)``, where
+    ``subagent_delegations`` is a list of genuine ``create_sub_agent``
+    delegations TrueForge itself recorded for this turn (empty if the model
+    chose not to delegate) — see ``_extract_subagent_delegations``.
 
     The turn's own success is judged independently of that events fetch: if
     the turn completes and parses successfully but the *subsequent*,
@@ -449,17 +472,10 @@ def run_turn(
         )
         session_resp.raise_for_status()
         session_id = session_resp.json()["data"]["id"]
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise TrueForgeError(f"Failed to create TrueForge session for {agent_name}: {exc}") from exc
 
-        turn_resp = httpx.post(
-            f"{_base_url()}/api/v1/sessions/{session_id}/turns",
-            json={"stream": False, "input": [{"type": "user.message", "content": message}]},
-            timeout=30.0,
-        )
-        turn_resp.raise_for_status()
-        turn_id = turn_resp.json()["data"]["id"]
-    except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-        raise TrueForgeError(f"Failed to start TrueForge turn for {agent_name}: {exc}") from exc
-
+    turn_id = _start_turn(session_id, message, label=agent_name)
     state = _poll_turn_to_done(agent_name, session_id, turn_id)
     result = _resolve_turn_result(agent_name, session_id, turn_id, state)
 
@@ -474,10 +490,31 @@ def run_turn(
                 agent_name,
                 exc,
             )
-            return result, None
+            return result, session_id, None
         delegations = _extract_subagent_delegations(events)
-        return result, delegations
-    return result
+        return result, session_id, delegations
+    return result, session_id
+
+
+def run_followup_turn(session_id: str, message: str) -> dict[str, Any] | list[PendingToolApproval]:
+    """Run one more user-message turn on an EXISTING TrueForge session and
+    return the parsed JSON object from the model's response — or a list of
+    PendingToolApproval if this turn also paused on an approval gate.
+
+    Unlike run_turn, this never calls POST /api/v1/sessions — it posts
+    straight to /api/v1/sessions/{session_id}/turns, so the model genuinely
+    continues the conversation it already had (its own prior reasoning is
+    still in context, held by TrueForge's own session store), rather than
+    being re-fed a fresh restatement of that context in a brand-new session.
+
+    Raises TrueForgeError under the same conditions as run_turn, plus if
+    the session_id no longer exists on the TrueForge side (e.g. its store
+    was cleared).
+    """
+    label = f"session {session_id}"
+    turn_id = _start_turn(session_id, message, label=label)
+    state = _poll_turn_to_done(label, session_id, turn_id)
+    return _resolve_turn_result(label, session_id, turn_id, state)
 
 
 def resume_turn(

@@ -129,7 +129,7 @@ def run_persona_fit(
     prompt = _build_prompt(lead, persona, solution)
 
     try:
-        result = run_agent_reasoning(
+        result, session_id = run_agent_reasoning(
             trueforge_agent_name=TRUEFORGE_AGENT_NAME,
             model=get_settings().trueforge_model,
             system_instruction=SYSTEM_INSTRUCTION,
@@ -148,7 +148,7 @@ def run_persona_fit(
         finish_run(db, run, output={"error": str(exc)}, reasoning=str(exc), status="failed")
         raise
 
-    finish_run(db, run, output=result, reasoning=result.get("reasoning", ""))
+    finish_run(db, run, output=result, reasoning=result.get("reasoning", ""), trueforge_session_id=session_id)
     return result, run.id
 
 
@@ -213,7 +213,7 @@ def resume_persona_fit(
         raise
 
     if approve:
-        finish_run(db, run, output=result, reasoning=result.get("reasoning", ""))
+        finish_run(db, run, output=result, reasoning=result.get("reasoning", ""), trueforge_session_id=session_id)
     else:
         finish_run(
             db,
@@ -221,5 +221,6 @@ def resume_persona_fit(
             output=result,
             reasoning=deny_reason or "Tool call rejected by marketer.",
             status="failed",
+            trueforge_session_id=session_id,
         )
     return result

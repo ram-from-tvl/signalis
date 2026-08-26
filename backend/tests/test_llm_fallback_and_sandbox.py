@@ -480,9 +480,12 @@ def test_ensure_agent_attaches_skills_and_enables_sandbox():
 def test_run_agent_reasoning_uses_trueforge_when_available():
     with patch("app.agents.common.get_settings") as mock_settings, \
          patch("app.agents.common.ensure_agent") as mock_ensure, \
-         patch("app.agents.common.run_turn", return_value={"stage": "late", "confidence": 0.9}) as mock_turn:
+         patch(
+             "app.agents.common.run_turn",
+             return_value=({"stage": "late", "confidence": 0.9}, "session-abc123"),
+         ) as mock_turn:
         mock_settings.return_value.trueforge_enabled = True
-        result = run_agent_reasoning(
+        result, session_id = run_agent_reasoning(
             trueforge_agent_name="signalis-buying-stage-orchestrator",
             model="google-gemini/gemini-2-5-flash",
             system_instruction="reason about stage",
@@ -490,6 +493,7 @@ def test_run_agent_reasoning_uses_trueforge_when_available():
             response_schema=SCHEMA,
         )
     assert result == {"stage": "late", "confidence": 0.9}
+    assert session_id == "session-abc123"
     mock_ensure.assert_called_once()
     mock_turn.assert_called_once()
 
@@ -583,7 +587,7 @@ def test_run_agent_reasoning_falls_back_when_update_agent_returns_malformed_json
          patch("httpx.get", return_value=malformed_list_response), \
          patch("app.core.llm._call_gemini_json", return_value={"stage": "mid", "confidence": 0.5}) as gemini:
         mock_settings.return_value.trueforge_enabled = True
-        result = run_agent_reasoning(
+        result, session_id = run_agent_reasoning(
             trueforge_agent_name="some-agent",
             model="google-gemini/gemini-2-5-flash",
             system_instruction="reason",
@@ -591,6 +595,7 @@ def test_run_agent_reasoning_falls_back_when_update_agent_returns_malformed_json
             response_schema=SCHEMA,
         )
     assert result == {"stage": "mid", "confidence": 0.5}
+    assert session_id is None
     gemini.assert_called_once()
 
 
@@ -668,8 +673,9 @@ def test_run_turn_returns_pending_approvals_when_turn_pauses():
 
     with patch("httpx.post", side_effect=[session_resp, turn_create_resp]), \
          patch("httpx.get", return_value=poll_resp):
-        result = run_turn("signalis-persona-fit", "assess fit")
+        result, session_id = run_turn("signalis-persona-fit", "assess fit")
 
+    assert session_id == "sess-1"
     assert isinstance(result, list)
     assert len(result) == 1
     pending = result[0]
@@ -706,9 +712,10 @@ def test_run_turn_returns_final_answer_when_no_pause():
 
     with patch("httpx.post", side_effect=[session_resp, turn_create_resp]), \
          patch("httpx.get", return_value=poll_resp):
-        result = run_turn("signalis-persona-fit", "assess fit")
+        result, session_id = run_turn("signalis-persona-fit", "assess fit")
 
     assert result == {"fit": "full_fit", "reasoning": "ok", "missing_data": []}
+    assert session_id == "sess-2"
 
 
 def test_resume_turn_posts_tool_approval_and_returns_final_answer():
@@ -801,7 +808,7 @@ def test_run_agent_reasoning_raises_agent_paused_when_turn_pauses():
     ]
     with patch("app.agents.common.get_settings") as mock_settings, \
          patch("app.agents.common.ensure_agent"), \
-         patch("app.agents.common.run_turn", return_value=pending):
+         patch("app.agents.common.run_turn", return_value=(pending, "sess-1")):
         mock_settings.return_value.trueforge_enabled = True
         with pytest.raises(AgentPausedForToolApproval) as exc_info:
             run_agent_reasoning(
@@ -830,7 +837,7 @@ def test_run_agent_reasoning_falls_back_and_strips_tool_references_when_mcp_conf
          patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
          patch("app.agents.common.generate_json", side_effect=fake_generate_json):
         mock_settings.return_value.trueforge_enabled = True
-        result = run_agent_reasoning(
+        result, session_id = run_agent_reasoning(
             trueforge_agent_name="signalis-persona-fit",
             model="google-gemini/gemini-2-5-flash",
             system_instruction="Use the classify_company_industry tool to enrich the lead.",
@@ -839,6 +846,7 @@ def test_run_agent_reasoning_falls_back_and_strips_tool_references_when_mcp_conf
             mcp_servers=[{"name": "signalis-enrichment"}],
         )
     assert result == {"fit": "full_fit", "reasoning": "matches", "missing_data": []}
+    assert session_id is None
     assert "No external tools are available" in captured["system_instruction"]
 
 
@@ -908,7 +916,7 @@ def test_run_agent_reasoning_with_delegations_returns_real_subagent_evidence():
          patch("app.agents.common.ensure_agent") as mock_ensure, \
          patch(
              "app.agents.common.run_turn",
-             return_value=({"ranking": [], "summary": "ok"}, fake_delegations),
+             return_value=({"ranking": [], "summary": "ok"}, "session-1", fake_delegations),
          ) as mock_turn:
         mock_settings.return_value.trueforge_enabled = True
         output, delegations, is_delegated = run_agent_reasoning_with_delegations(
@@ -1055,9 +1063,10 @@ def test_run_turn_returns_successful_ranking_when_events_fetch_fails():
 
     with patch("httpx.post", side_effect=[session_resp, turn_start_resp]), \
          patch("httpx.get", side_effect=[poll_resp, httpx.ConnectError("events endpoint down")]):
-        output, delegations = run_turn("signalis-prioritization", "rank these leads", with_delegations=True)
+        output, session_id, delegations = run_turn("signalis-prioritization", "rank these leads", with_delegations=True)
 
     assert output == {"ranking": [], "summary": "ok"}
+    assert session_id == "session-1"
     assert delegations is None
 
 
@@ -1067,17 +1076,20 @@ def test_run_turn_returns_delegations_when_events_fetch_succeeds():
 
     with patch("httpx.post", side_effect=[session_resp, turn_start_resp]), \
          patch("httpx.get", side_effect=[poll_resp, events_resp]):
-        output, delegations = run_turn("signalis-prioritization", "rank these leads", with_delegations=True)
+        output, session_id, delegations = run_turn("signalis-prioritization", "rank these leads", with_delegations=True)
 
     assert output == {"ranking": [], "summary": "ok"}
+    assert session_id == "session-1"
     assert delegations == []
+
+
 def test_run_agent_reasoning_passes_skills_to_ensure_agent():
     """The TrueForge path must actually forward `skills` through to
     ensure_agent so the manifest genuinely includes the attachment, not just
     accept the parameter and drop it."""
     with patch("app.agents.common.get_settings") as mock_settings, \
          patch("app.agents.common.ensure_agent") as mock_ensure, \
-         patch("app.agents.common.run_turn", return_value={"stage": "late", "confidence": 0.9}):
+         patch("app.agents.common.run_turn", return_value=({"stage": "late", "confidence": 0.9}, "session-1")):
         mock_settings.return_value.trueforge_enabled = True
         run_agent_reasoning(
             trueforge_agent_name="signalis-outreach-planner",

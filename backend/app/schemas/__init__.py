@@ -1,4 +1,4 @@
-from app.schemas.agent_run import AgentRunOut
+from app.schemas.agent_run import AgentRunFollowupCreate, AgentRunFollowupOut, AgentRunOut
 from app.schemas.classification import ApprovalActionRequest, OutreachPlanOut, StageClassificationOut
 from app.schemas.dashboard import DashboardStats
 from app.schemas.ingestion import IngestionReportOut
@@ -27,6 +27,8 @@ __all__ = [
     "OutreachPlanOut",
     "ApprovalActionRequest",
     "AgentRunOut",
+    "AgentRunFollowupCreate",
+    "AgentRunFollowupOut",
     "PipelineRunRequest",
     "PipelineRunResult",
     "PipelineRunResponse",

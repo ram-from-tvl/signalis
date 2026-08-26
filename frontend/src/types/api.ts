@@ -111,6 +111,22 @@ export interface AgentRun {
   status: string
   started_at: string
   completed_at: string | null
+  // Whether this run has a live TrueForge session a marketer can ask a
+  // follow-up question against. False for runs that used the direct-Gemini
+  // fallback path (no TrueForge session was created for them).
+  can_ask_followup: boolean
+}
+
+// Shape is hand-mirrored in two other places with no shared contract or
+// codegen — keep in sync with backend/app/models/followup.py::AgentRunFollowup
+// and backend/app/schemas/agent_run.py::AgentRunFollowupOut. See
+// docs/DECISIONS.md for why this is hand-duplicated rather than generated.
+export interface AgentRunFollowup {
+  id: string
+  agent_run_id: string
+  question: string
+  answer: string
+  created_at: string
 }
 
 export interface LeadListItem {

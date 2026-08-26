@@ -259,6 +259,18 @@ def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead,
     result["ranking"] = _normalize_ranking(raw_ranking, leads_with_classifications)
     result["agent_run_id"] = run.id
 
+    # Note: unlike every other agent, this run's trueforge_session_id is not
+    # persisted — run_agent_reasoning_with_delegations (unlike plain
+    # run_agent_reasoning) does not surface the session id to its caller, to
+    # avoid rippling its established (output, delegations, is_delegated)
+    # contract across every existing call site/test for a session that
+    # would be unreachable anyway: the follow-up Q&A endpoint
+    # (app/api/routes/agent_followups.py) is scoped under
+    # /api/leads/{lead_id}/agent-runs/{agent_run_id}, and this run's lead_id
+    # is always None (it's a pipeline-wide run, not lead-scoped). This is an
+    # intentional, documented scope limitation, not an oversight — see
+    # docs/DECISIONS.md.
+    #
     # Real evidence of subagent delegation for the trace, not just the
     # model's self-report: how many per-lead subagents TrueForge's own
     # session events recorded actually ran, and how long each took.

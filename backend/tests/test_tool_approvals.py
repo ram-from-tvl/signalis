@@ -215,7 +215,7 @@ def test_run_pipeline_for_lead_persists_pending_approval_and_raises(db_session, 
 
     def fake_run_agent_reasoning(**kwargs):
         if kwargs["trueforge_agent_name"] == "signalis-signal-extraction":
-            return {"extracted_signals": []}
+            return {"extracted_signals": []}, "sess-signal-extraction"
         if kwargs["trueforge_agent_name"] == "signalis-persona-fit":
             raise AgentPausedForToolApproval(pending)
         raise AssertionError(f"unexpected agent call: {kwargs['trueforge_agent_name']}")

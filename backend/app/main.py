@@ -11,6 +11,7 @@ from sqlalchemy import inspect
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.db.base import Base
+from app.db.migrations import run_startup_migrations
 from app.db.session import engine
 
 settings = get_settings()
@@ -38,6 +39,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     if new_tables:
         logger.info("Creating new database table(s) on startup: %s", ", ".join(sorted(new_tables)))
     Base.metadata.create_all(bind=engine)
+    run_startup_migrations(engine)
     yield
 
 
