@@ -149,11 +149,11 @@ def test_ensure_agent_treats_already_exists_conflict_as_success():
         ensure_agent("signalis-persona-fit", model="google-gemini/gemini-2-5-flash", instructions="x")
 
     # The already-exists path must PUT-update the manifest (not silently
-    # no-op), since config like require_approval_for_tools has to take
-    # effect on an agent that was already registered by an earlier run.
+    # no-op), since config like require_approval_for_tools or a newly
+    # attached MCP server has to take effect on an agent that was already
+    # registered by an earlier run.
     mock_put.assert_called_once()
     assert mock_put.call_args.args[0] == "http://localhost:8790/api/v1/agents/agent-123"
-
 
 def test_ensure_agent_raises_on_genuine_error():
     fake_response = MagicMock()

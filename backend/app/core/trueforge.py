@@ -57,8 +57,9 @@ def ensure_agent(name: str, *, model: str, instructions: str, mcp_servers: list[
 
     TrueForge agent names are unique, but the manifest itself is mutable via
     `PUT /api/v1/agents/{agent_id}` — this matters for config (like
-    `require_approval_for_tools`) that needs to take effect on an agent that
-    was already registered by an earlier run.
+    `require_approval_for_tools`, or which MCP servers are attached) that
+    needs to take effect on an agent that was already registered by an
+    earlier run.
     """
     manifest: dict[str, Any] = {
         "model": {"name": model},
@@ -87,8 +88,9 @@ def ensure_agent(name: str, *, model: str, instructions: str, mcp_servers: list[
 
 def _update_agent(name: str, manifest: dict[str, Any]) -> None:
     """PUT-updates an already-registered agent's manifest so config changes
-    (e.g. require_approval_for_tools) actually take effect, rather than
-    silently no-op'ing because the agent already existed."""
+    (e.g. require_approval_for_tools, or a newly attached MCP server)
+    actually take effect, rather than silently no-op'ing because the agent
+    already existed."""
     try:
         get_resp = httpx.get(f"{_base_url()}/api/v1/agents", timeout=15.0)
         get_resp.raise_for_status()
