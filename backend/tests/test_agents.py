@@ -18,7 +18,7 @@ from app.models import Persona, Solution
 def test_buying_stage_confidence_is_clamped_to_valid_range(db_session, sample_lead):
     with patch(
         "app.agents.buying_stage.run_agent_reasoning",
-        return_value={"stage": "late", "confidence": 1.7, "justification": "test"},
+        return_value=({"stage": "late", "confidence": 1.7, "justification": "test"}, "session-abc"),
     ), patch(
         "app.agents.buying_stage.run_signal_scoring",
         return_value=({"weighted_score": 2.1, "signal_count": 2}, "local"),
@@ -31,7 +31,7 @@ def test_buying_stage_confidence_is_clamped_to_valid_range(db_session, sample_le
 def test_buying_stage_confidence_clamped_when_negative(db_session, sample_lead):
     with patch(
         "app.agents.buying_stage.run_agent_reasoning",
-        return_value={"stage": "early", "confidence": -0.3, "justification": "test"},
+        return_value=({"stage": "early", "confidence": -0.3, "justification": "test"}, "session-def"),
     ), patch(
         "app.agents.buying_stage.run_signal_scoring",
         return_value=({"weighted_score": 1.0, "signal_count": 2}, "local"),
@@ -78,7 +78,7 @@ def test_outreach_plan_has_expected_shape(db_session, sample_lead):
         "channels": ["email", "linkedin"],
         "summary": "A short plan.",
     }
-    with patch("app.agents.outreach_planner.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-ghi")):
         result = run_outreach_planner(
             db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution
         )
@@ -96,7 +96,10 @@ def test_outreach_plan_has_expected_shape(db_session, sample_lead):
 def test_persona_fit_handles_missing_persona_and_solution(db_session, sample_lead):
     with patch(
         "app.agents.persona_fit.run_agent_reasoning",
-        return_value={"fit": "partial_fit", "reasoning": "no persona defined", "missing_data": ["persona"]},
+        return_value=(
+            {"fit": "partial_fit", "reasoning": "no persona defined", "missing_data": ["persona"]},
+            "session-jkl",
+        ),
     ):
         result = run_persona_fit(db_session, sample_lead, None, None)
     assert result["fit"] == "partial_fit"

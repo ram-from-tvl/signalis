@@ -154,9 +154,12 @@ def test_ensure_agent_raises_on_genuine_error():
 def test_run_agent_reasoning_uses_trueforge_when_available():
     with patch("app.agents.common.get_settings") as mock_settings, \
          patch("app.agents.common.ensure_agent") as mock_ensure, \
-         patch("app.agents.common.run_turn", return_value={"stage": "late", "confidence": 0.9}) as mock_turn:
+         patch(
+             "app.agents.common.run_turn",
+             return_value=({"stage": "late", "confidence": 0.9}, "session-abc123"),
+         ) as mock_turn:
         mock_settings.return_value.trueforge_enabled = True
-        result = run_agent_reasoning(
+        result, session_id = run_agent_reasoning(
             trueforge_agent_name="signalis-buying-stage-orchestrator",
             model="google-gemini/gemini-2-5-flash",
             system_instruction="reason about stage",
@@ -164,6 +167,7 @@ def test_run_agent_reasoning_uses_trueforge_when_available():
             response_schema=SCHEMA,
         )
     assert result == {"stage": "late", "confidence": 0.9}
+    assert session_id == "session-abc123"
     mock_ensure.assert_called_once()
     mock_turn.assert_called_once()
 
@@ -183,7 +187,7 @@ def test_run_agent_reasoning_falls_back_and_strips_tool_references_when_mcp_conf
          patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
          patch("app.agents.common.generate_json", side_effect=fake_generate_json):
         mock_settings.return_value.trueforge_enabled = True
-        result = run_agent_reasoning(
+        result, session_id = run_agent_reasoning(
             trueforge_agent_name="signalis-persona-fit",
             model="google-gemini/gemini-2-5-flash",
             system_instruction="Use the classify_company_industry tool to enrich the lead.",
@@ -192,4 +196,5 @@ def test_run_agent_reasoning_falls_back_and_strips_tool_references_when_mcp_conf
             mcp_servers=[{"name": "signalis-enrichment"}],
         )
     assert result == {"fit": "full_fit", "reasoning": "matches", "missing_data": []}
+    assert session_id is None
     assert "No external tools are available" in captured["system_instruction"]

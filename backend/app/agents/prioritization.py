@@ -145,7 +145,7 @@ def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead,
     }
 
     try:
-        result = run_agent_reasoning(
+        result, session_id = run_agent_reasoning(
             trueforge_agent_name="signalis-prioritization",
             model=get_settings().trueforge_model,
             system_instruction=SYSTEM_INSTRUCTION,
@@ -167,5 +167,5 @@ def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead,
     result["ranking"] = _normalize_ranking(raw_ranking, leads_with_classifications)
     result["agent_run_id"] = run.id
 
-    finish_run(db, run, output=result, reasoning=result.get("summary", ""))
+    finish_run(db, run, output=result, reasoning=result.get("summary", ""), trueforge_session_id=session_id)
     return result

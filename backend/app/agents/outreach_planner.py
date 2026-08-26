@@ -83,7 +83,7 @@ def run_outreach_planner(
     }
 
     try:
-        result = run_agent_reasoning(
+        result, session_id = run_agent_reasoning(
             trueforge_agent_name="signalis-outreach-planner",
             model=get_settings().trueforge_model,
             system_instruction=SYSTEM_INSTRUCTION,
@@ -95,5 +95,5 @@ def run_outreach_planner(
         finish_run(db, run, output={"error": str(exc)}, reasoning=str(exc), status="failed")
         raise
 
-    finish_run(db, run, output=result, reasoning=result.get("summary", ""))
+    finish_run(db, run, output=result, reasoning=result.get("summary", ""), trueforge_session_id=session_id)
     return result

@@ -46,7 +46,7 @@ def test_prioritization_orders_and_filters_llm_output(db_session):
         ],
         "summary": "Alice first due to late-stage signals.",
     }
-    with patch("app.agents.prioritization.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.prioritization.run_agent_reasoning", return_value=(mocked_response, "session-xyz")):
         result = run_prioritization(db_session, [(lead_a, class_a), (lead_b, class_b)])
 
     assert len(result["ranking"]) == 2
@@ -74,7 +74,7 @@ def test_prioritization_normalizes_duplicate_and_out_of_range_ranks(db_session):
         ],
         "summary": "test",
     }
-    with patch("app.agents.prioritization.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.prioritization.run_agent_reasoning", return_value=(mocked_response, "session-xyz")):
         result = run_prioritization(db_session, [(lead_a, class_a), (lead_b, class_b)])
 
     ranks = [entry["rank"] for entry in result["ranking"]]
@@ -92,7 +92,7 @@ def test_prioritization_appends_leads_missing_from_llm_output(db_session):
         "ranking": [{"lead_id": lead_a.id, "rank": 1, "reasoning": "only lead the model ranked"}],
         "summary": "test",
     }
-    with patch("app.agents.prioritization.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.prioritization.run_agent_reasoning", return_value=(mocked_response, "session-xyz")):
         result = run_prioritization(db_session, [(lead_a, class_a), (lead_b, class_b)])
 
     lead_ids = [entry["lead_id"] for entry in result["ranking"]]
@@ -108,7 +108,7 @@ def test_ranking_api_run_and_latest_endpoints(client, db_session):
         "ranking": [{"lead_id": lead_a.id, "rank": 1, "reasoning": "only lead, late stage"}],
         "summary": "Only one classified lead; ranked first by default.",
     }
-    with patch("app.agents.prioritization.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.prioritization.run_agent_reasoning", return_value=(mocked_response, "session-xyz")):
         run_resp = client.post("/api/ranking/run")
     assert run_resp.status_code == 200
     body = run_resp.json()
@@ -132,7 +132,7 @@ def test_ranking_snapshot_is_unaffected_by_later_reclassification(client, db_ses
         "ranking": [{"lead_id": lead_a.id, "rank": 1, "reasoning": "mid stage at ranking time"}],
         "summary": "test",
     }
-    with patch("app.agents.prioritization.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.prioritization.run_agent_reasoning", return_value=(mocked_response, "session-xyz")):
         run_resp = client.post("/api/ranking/run")
     ranking_id = run_resp.json()["id"]
 

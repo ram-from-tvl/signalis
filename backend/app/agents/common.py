@@ -41,11 +41,14 @@ def finish_run(
     output: dict[str, Any],
     reasoning: str,
     status: str = "completed",
+    trueforge_session_id: str | None = None,
 ) -> AgentRun:
     run.output = output
     run.reasoning = reasoning
     run.status = status
     run.completed_at = datetime.datetime.utcnow()
+    if trueforge_session_id is not None:
+        run.trueforge_session_id = trueforge_session_id
     db.add(run)
     db.commit()
     db.refresh(run)
@@ -61,7 +64,7 @@ def run_agent_reasoning(
     response_schema: dict[str, Any],
     temperature: float = 0.3,
     mcp_servers: list[dict] | None = None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], str | None]:
     """Run one agent's reasoning step through the TrueForge harness so the
     real agent loop (model calls, MCP tool discovery/execution, context
     management) genuinely executes this step, rather than a bare model call.
@@ -71,6 +74,13 @@ def run_agent_reasoning(
     real model reasoning when the local harness sidecar is not running —
     this is a transport fallback, not a second reasoning path: both routes
     execute the same prompt and schema.
+
+    Returns (parsed_result, trueforge_session_id). The session_id is None
+    whenever the fallback path was used (there is no TrueForge session in
+    that case) — callers persist it on the AgentRun so a later marketer
+    follow-up question can be answered as a real continuation turn on the
+    same TrueForge session, with genuine conversational memory of this run's
+    own output, rather than a fresh one-shot call re-fed the context.
     """
     settings = get_settings()
     if settings.trueforge_enabled:
@@ -84,7 +94,8 @@ def run_agent_reasoning(
                 ),
                 mcp_servers=mcp_servers,
             )
-            return run_turn(trueforge_agent_name, prompt)
+            result, session_id = run_turn(trueforge_agent_name, prompt)
+            return result, session_id
         except TrueForgeError as exc:
             logger.warning(
                 "TrueForge call failed for %s, falling back to direct LLM call: %s",
@@ -106,11 +117,12 @@ def run_agent_reasoning(
         )
 
     try:
-        return generate_json(
+        result = generate_json(
             system_instruction=fallback_instruction,
             prompt=prompt,
             response_schema=response_schema,
             temperature=temperature,
         )
+        return result, None
     except LLMError as exc:
         raise LLMError(f"Agent {trueforge_agent_name} reasoning failed: {exc}") from exc

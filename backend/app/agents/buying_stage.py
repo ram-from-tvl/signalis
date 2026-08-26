@@ -97,7 +97,7 @@ def run_buying_stage(
     }
 
     try:
-        result = run_agent_reasoning(
+        result, session_id = run_agent_reasoning(
             trueforge_agent_name="signalis-buying-stage-orchestrator",
             model=get_settings().trueforge_model,
             system_instruction=SYSTEM_INSTRUCTION,
@@ -112,5 +112,5 @@ def run_buying_stage(
     result["confidence"] = max(0.0, min(1.0, float(result.get("confidence", 0.0))))
     result["signal_score"] = score["weighted_score"]
     result["signal_score_computed_via"] = execution_path
-    finish_run(db, run, output=result, reasoning=result.get("justification", ""))
+    finish_run(db, run, output=result, reasoning=result.get("justification", ""), trueforge_session_id=session_id)
     return result
