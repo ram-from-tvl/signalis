@@ -156,14 +156,45 @@ the full decision history remains inspectable.
 Unlike the five agents above, the Prioritization/Ranking Agent
 (`app/agents/prioritization.py`) does not run per-lead as part of the graph.
 It runs once across the whole pipeline, on demand (`POST /api/ranking/run`),
-over every lead's current (non-superseded) `stage_classification`. Given
-every lead's stage, confidence, and justification in one prompt, it returns
-a single priority order — rank 1 is who to contact first — with a specific,
-non-generic reason per lead, using the same TrueForge session/turn mechanism
-and Gemini→Hugging Face fallback chain as the other five agents. It
+over every lead's current (non-superseded) `stage_classification`. It
 deliberately does not just sort by stage label: a high-confidence, recently
 active mid-stage lead can legitimately outrank a low-confidence, stale
 late-stage one, and the agent's own reasoning is expected to say so.
+
+**Two-phase ranking via genuine TrueForge subagent delegation.** Instead of
+one prompt asking the model to reason about every lead sequentially, the
+root agent's system instruction requires two phases inside a single
+TrueForge turn:
+
+1. **Per-lead priority assessment, delegated in parallel.** For every lead,
+   the root agent calls TrueForge's built-in `create_sub_agent` tool once,
+   giving each subagent only that one lead's stage/confidence/justification
+   and asking for an isolated `{lead_id, priority_score, reasoning}`. This is
+   TrueForge's real subagent primitive — the harness runs these subagent
+   threads concurrently, each with its own fresh context (no shared message
+   history with the root or with each other), and returns only each
+   subagent's final result to the root, exactly as advertised in
+   TrueForge's own docs ("delegate focused subtasks to parallel subagents,
+   each with its own clean context... only the final result returns to the
+   root agent").
+2. **Consolidation, in the root's own context.** Once every subagent has
+   returned, the root agent — the only participant that has seen every
+   lead's assessment together — performs the actual cross-lead comparison
+   (the "high-confidence mid-stage beats low-confidence late-stage"
+   judgment) and produces the final 1..N order.
+
+This is implemented as instructions to the model, not a Python-side fan-out:
+TrueForge's subagent spawning is a dynamic, model-decided capability (the
+model itself chooses when to call `create_sub_agent`, with model-generated
+per-subagent instructions) rather than a manifest field Python can
+predeclare with N specific payloads — see `docs/DECISIONS.md` for the exact
+API evidence this was verified against. `run_agent_reasoning_with_delegations`
+(`app/agents/common.py`) additionally reads back TrueForge's own session
+event stream (`GET /api/v1/sessions/{id}/events`) after the turn completes
+and pairs up each `thread.created`/`thread.done` event into per-subagent
+evidence (name, status, latency), so a ranking run's `agent_runs.output`
+carries proof that delegation genuinely happened rather than trusting the
+model's self-report of what it did.
 
 Results are persisted as an append-only `PipelineRanking` snapshot (see
 `docs/DATA_SCHEMA.md`), the same pattern as `stage_classifications` and
@@ -171,4 +202,5 @@ Results are persisted as an append-only `PipelineRanking` snapshot (see
 mutating the previous one, so a manager can see how the priority order
 shifted over time. The audit trail for this agent's own run is a regular
 `agent_runs` row with `lead_id = NULL`, since it reasons about the pipeline
-as a whole rather than any single lead.
+as a whole rather than any single lead; that row's `output.subagent_delegation`
+field is the subagent evidence described above.

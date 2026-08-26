@@ -114,3 +114,61 @@ def run_agent_reasoning(
         )
     except LLMError as exc:
         raise LLMError(f"Agent {trueforge_agent_name} reasoning failed: {exc}") from exc
+
+
+def run_agent_reasoning_with_delegations(
+    *,
+    trueforge_agent_name: str,
+    model: str,
+    system_instruction: str,
+    prompt: str,
+    response_schema: dict[str, Any],
+    temperature: float = 0.3,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Like `run_agent_reasoning`, but also returns the list of genuine
+    TrueForge subagent delegations (`create_sub_agent` calls) the root
+    agent's turn performed, as recorded on TrueForge's own session event
+    stream — see `app.core.trueforge._extract_subagent_delegations`.
+
+    Used by agents (currently only Prioritization) whose system instruction
+    asks the model to delegate parallel per-item work to subagents, so the
+    caller can persist real evidence that delegation happened rather than
+    just trusting the model's own narration of what it did. Only available
+    on the TrueForge path — dynamic subagent delegation is a TrueForge
+    runtime feature with no equivalent in the direct Gemini/HF fallback, so
+    when TrueForge is disabled/unreachable this falls back to
+    `run_agent_reasoning` with an empty delegations list, exactly like every
+    other agent's fallback behavior (same prompt/schema, just without the
+    TrueForge session wrapper or subagent capability).
+    """
+    settings = get_settings()
+    if settings.trueforge_enabled:
+        try:
+            ensure_agent(
+                trueforge_agent_name,
+                model=model,
+                instructions=(
+                    f"{system_instruction}\n\nRespond with a single JSON object matching this "
+                    f"JSON schema exactly, and nothing else: {json.dumps(response_schema)}"
+                ),
+            )
+            output, delegations = run_turn(trueforge_agent_name, prompt, with_delegations=True)
+            return output, delegations
+        except TrueForgeError as exc:
+            logger.warning(
+                "TrueForge call failed for %s, falling back to direct LLM call "
+                "(subagent delegation unavailable on the fallback path): %s",
+                trueforge_agent_name,
+                exc,
+            )
+
+    try:
+        output = generate_json(
+            system_instruction=system_instruction,
+            prompt=prompt,
+            response_schema=response_schema,
+            temperature=temperature,
+        )
+        return output, []
+    except LLMError as exc:
+        raise LLMError(f"Agent {trueforge_agent_name} reasoning failed: {exc}") from exc

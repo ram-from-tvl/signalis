@@ -8,10 +8,10 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from app.agents.common import run_agent_reasoning
+from app.agents.common import run_agent_reasoning, run_agent_reasoning_with_delegations
 from app.core.llm import LLMError, generate_json
 from app.core.sandbox import run_signal_scoring
-from app.core.trueforge import TrueForgeError, ensure_agent
+from app.core.trueforge import TrueForgeError, _extract_subagent_delegations, ensure_agent
 
 SCHEMA = {
     "type": "object",
@@ -193,3 +193,106 @@ def test_run_agent_reasoning_falls_back_and_strips_tool_references_when_mcp_conf
         )
     assert result == {"fit": "full_fit", "reasoning": "matches", "missing_data": []}
     assert "No external tools are available" in captured["system_instruction"]
+
+
+def test_extract_subagent_delegations_pairs_created_and_done_events():
+    """Regression coverage for the pairing logic that turns TrueForge's raw
+    thread.created/thread.done session events into the per-subagent evidence
+    persisted on a Prioritization run's output. Verified against the exact
+    event shape observed live against the running TrueForge harness (a
+    3-subagent smoke test: session events included thread.created events with
+    agent_info.name/input and later thread.done events with the same
+    thread_id and a state.status)."""
+    events = [
+        {
+            "event": {
+                "type": "thread.created",
+                "thread_id": "t1",
+                "agent_info": {"type": "dynamic", "name": "subagent_lead_a", "input": "assess lead a"},
+                "created_at": "2026-08-26T08:03:45.501Z",
+            }
+        },
+        {
+            "event": {
+                "type": "thread.done",
+                "thread_id": "t1",
+                "created_at": "2026-08-26T08:03:47.449Z",
+                "state": {"status": "done", "output": {"content": "..."}},
+            }
+        },
+        # An unrelated turn.done event (no thread_id) must be ignored, not
+        # mistaken for a subagent event.
+        {"event": {"type": "turn.done", "thread_id": None}},
+    ]
+    delegations = _extract_subagent_delegations(events)
+    assert len(delegations) == 1
+    assert delegations[0]["thread_id"] == "t1"
+    assert delegations[0]["name"] == "subagent_lead_a"
+    assert delegations[0]["status"] == "done"
+    assert delegations[0]["latency_seconds"] == pytest.approx(1.948, abs=0.01)
+
+
+def test_extract_subagent_delegations_handles_incomplete_thread():
+    """A thread.created with no matching thread.done yet (e.g. events fetched
+    mid-flight) must not raise — it should be reported as incomplete rather
+    than silently dropped, since that's real information about the run."""
+    events = [
+        {
+            "event": {
+                "type": "thread.created",
+                "thread_id": "t2",
+                "agent_info": {"type": "dynamic", "name": "subagent_lead_b", "input": "assess lead b"},
+                "created_at": "2026-08-26T08:03:45.501Z",
+            }
+        }
+    ]
+    delegations = _extract_subagent_delegations(events)
+    assert len(delegations) == 1
+    assert delegations[0]["status"] == "incomplete"
+    assert "latency_seconds" not in delegations[0]
+
+
+def test_run_agent_reasoning_with_delegations_returns_real_subagent_evidence():
+    """When TrueForge genuinely delegated (create_sub_agent calls recorded on
+    the session), run_agent_reasoning_with_delegations must surface that
+    evidence alongside the parsed output, not just the final ranking."""
+    fake_delegations = [{"thread_id": "t1", "name": "subagent_lead_a", "status": "done", "latency_seconds": 1.2}]
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent") as mock_ensure, \
+         patch(
+             "app.agents.common.run_turn",
+             return_value=({"ranking": [], "summary": "ok"}, fake_delegations),
+         ) as mock_turn:
+        mock_settings.return_value.trueforge_enabled = True
+        output, delegations = run_agent_reasoning_with_delegations(
+            trueforge_agent_name="signalis-prioritization",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction="rank leads, delegating per-lead assessment to subagents",
+            prompt="lead data",
+            response_schema=SCHEMA,
+        )
+    assert output == {"ranking": [], "summary": "ok"}
+    assert delegations == fake_delegations
+    mock_ensure.assert_called_once()
+    mock_turn.assert_called_once_with(
+        "signalis-prioritization", "lead data", with_delegations=True
+    )
+
+
+def test_run_agent_reasoning_with_delegations_falls_back_with_no_subagents():
+    """The direct Gemini/HF fallback path has no subagent capability, so
+    falling back must report an empty, honest delegation list rather than
+    fabricating evidence of delegation that never happened."""
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
+         patch("app.agents.common.generate_json", return_value={"ranking": [], "summary": "fallback"}):
+        mock_settings.return_value.trueforge_enabled = True
+        output, delegations = run_agent_reasoning_with_delegations(
+            trueforge_agent_name="signalis-prioritization",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction="rank leads",
+            prompt="lead data",
+            response_schema=SCHEMA,
+        )
+    assert output == {"ranking": [], "summary": "fallback"}
+    assert delegations == []

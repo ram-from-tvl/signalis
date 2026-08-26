@@ -1,5 +1,7 @@
 """Unit and API tests for the Prioritization/Ranking Agent, with the shared
-run_agent_reasoning boundary mocked (same convention as the other agents)."""
+run_agent_reasoning_with_delegations boundary mocked (same convention as the
+other agents' run_agent_reasoning mocking, extended with the (output,
+delegations) tuple this agent's two-phase flow returns)."""
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -46,7 +48,7 @@ def test_prioritization_orders_and_filters_llm_output(db_session):
         ],
         "summary": "Alice first due to late-stage signals.",
     }
-    with patch("app.agents.prioritization.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.prioritization.run_agent_reasoning_with_delegations", return_value=(mocked_response, [])):
         result = run_prioritization(db_session, [(lead_a, class_a), (lead_b, class_b)])
 
     assert len(result["ranking"]) == 2
@@ -74,7 +76,7 @@ def test_prioritization_normalizes_duplicate_and_out_of_range_ranks(db_session):
         ],
         "summary": "test",
     }
-    with patch("app.agents.prioritization.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.prioritization.run_agent_reasoning_with_delegations", return_value=(mocked_response, [])):
         result = run_prioritization(db_session, [(lead_a, class_a), (lead_b, class_b)])
 
     ranks = [entry["rank"] for entry in result["ranking"]]
@@ -92,7 +94,7 @@ def test_prioritization_appends_leads_missing_from_llm_output(db_session):
         "ranking": [{"lead_id": lead_a.id, "rank": 1, "reasoning": "only lead the model ranked"}],
         "summary": "test",
     }
-    with patch("app.agents.prioritization.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.prioritization.run_agent_reasoning_with_delegations", return_value=(mocked_response, [])):
         result = run_prioritization(db_session, [(lead_a, class_a), (lead_b, class_b)])
 
     lead_ids = [entry["lead_id"] for entry in result["ranking"]]
@@ -108,7 +110,7 @@ def test_ranking_api_run_and_latest_endpoints(client, db_session):
         "ranking": [{"lead_id": lead_a.id, "rank": 1, "reasoning": "only lead, late stage"}],
         "summary": "Only one classified lead; ranked first by default.",
     }
-    with patch("app.agents.prioritization.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.prioritization.run_agent_reasoning_with_delegations", return_value=(mocked_response, [])):
         run_resp = client.post("/api/ranking/run")
     assert run_resp.status_code == 200
     body = run_resp.json()
@@ -132,7 +134,7 @@ def test_ranking_snapshot_is_unaffected_by_later_reclassification(client, db_ses
         "ranking": [{"lead_id": lead_a.id, "rank": 1, "reasoning": "mid stage at ranking time"}],
         "summary": "test",
     }
-    with patch("app.agents.prioritization.run_agent_reasoning", return_value=mocked_response):
+    with patch("app.agents.prioritization.run_agent_reasoning_with_delegations", return_value=(mocked_response, [])):
         run_resp = client.post("/api/ranking/run")
     ranking_id = run_resp.json()["id"]
 
@@ -166,3 +168,55 @@ def test_ranking_latest_returns_null_when_never_run(client):
     resp = client.get("/api/ranking/latest")
     assert resp.status_code == 200
     assert resp.json() is None
+
+
+def test_prioritization_records_subagent_delegation_evidence(db_session):
+    """When TrueForge genuinely delegated per-lead assessment to subagents,
+    that evidence (count + per-subagent latency, from TrueForge's own session
+    events) must be persisted on the run's output, not just the model's final
+    ranking, so the Agent Trace can show real subagent delegation happened."""
+    lead_a, class_a = _lead_and_classification(db_session, name="Alice", stage="late", confidence=0.9)
+    lead_b, class_b = _lead_and_classification(db_session, name="Bob", stage="mid", confidence=0.6)
+
+    mocked_response = {
+        "ranking": [
+            {"lead_id": lead_a.id, "rank": 1, "reasoning": "late stage, high confidence"},
+            {"lead_id": lead_b.id, "rank": 2, "reasoning": "mid stage"},
+        ],
+        "summary": "Alice first.",
+    }
+    mocked_delegations = [
+        {"thread_id": "t1", "name": "subagent_alice", "input": "...", "status": "done", "latency_seconds": 1.2},
+        {"thread_id": "t2", "name": "subagent_bob", "input": "...", "status": "done", "latency_seconds": 1.4},
+    ]
+    with patch(
+        "app.agents.prioritization.run_agent_reasoning_with_delegations",
+        return_value=(mocked_response, mocked_delegations),
+    ):
+        result = run_prioritization(db_session, [(lead_a, class_a), (lead_b, class_b)])
+
+    assert result["subagent_delegation"]["used"] is True
+    assert result["subagent_delegation"]["subagent_count"] == 2
+    assert result["subagent_delegation"]["subagents"] == mocked_delegations
+
+
+def test_prioritization_marks_delegation_unused_when_none_occurred(db_session):
+    """If the model didn't delegate (e.g. TrueForge unreachable and the call
+    fell back to a direct LLM call with no subagent capability), the output
+    must honestly report zero subagents rather than implying delegation
+    happened."""
+    lead_a, class_a = _lead_and_classification(db_session, name="Alice", stage="late", confidence=0.9)
+
+    mocked_response = {
+        "ranking": [{"lead_id": lead_a.id, "rank": 1, "reasoning": "only lead"}],
+        "summary": "test",
+    }
+    with patch(
+        "app.agents.prioritization.run_agent_reasoning_with_delegations",
+        return_value=(mocked_response, []),
+    ):
+        result = run_prioritization(db_session, [(lead_a, class_a)])
+
+    assert result["subagent_delegation"]["used"] is False
+    assert result["subagent_delegation"]["subagent_count"] == 0
+    assert result["subagent_delegation"]["subagents"] == []
