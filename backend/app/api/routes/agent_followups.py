@@ -29,13 +29,9 @@ _FOLLOWUP_RESPONSE_SCHEMA = {
 
 
 def _get_agent_run(db: Session, lead_id: str, agent_run_id: str) -> AgentRun:
-    # This route is lead-scoped by design (see the module docstring/router
-    # prefix), so a pipeline-wide run with lead_id=None (currently only
-    # produced by the prioritization agent) can never match here and is
-    # unreachable through this endpoint even though it may have a
-    # trueforge_session_id persisted on it. That is an intentional,
-    # documented scope limitation for this PR rather than an oversight —
-    # see docs/DECISIONS.md for the reasoning.
+    # Lead-scoped by design: a pipeline-wide run (lead_id=None, currently
+    # only prioritization) can never match here, even with a session
+    # persisted on it — an intentional scope limitation, not an oversight.
     run = db.get(AgentRun, agent_run_id)
     if not run or run.lead_id != lead_id:
         raise HTTPException(404, "Agent run not found for this lead")
@@ -78,17 +74,11 @@ def ask_followup(
     except LLMError as exc:  # pragma: no cover - run_followup_turn never falls back, defensive only
         raise HTTPException(502, f"Follow-up turn failed: {exc}") from exc
 
-    # `_extract_json_object` is annotated to return dict[str, Any] but does
-    # not itself validate that shape — it is only a best-effort JSON parse,
-    # so the result here is untrusted until checked. A response with a
-    # missing/blank answer, or an `answer` key present but of the wrong
-    # type (e.g. the model returned an array or number instead of a
-    # string), must never be silently turned into a canned placeholder and
-    # persisted as if it were a genuine successful exchange — that would
-    # make a real dependency failure indistinguishable from a real answer
-    # in the audit history. Treat any of these as the same class of
-    # TrueForge dependency failure as a transport/HTTP error: a 502, and no
-    # DB row.
+    # _extract_json_object is only a best-effort parse, not a validated
+    # shape — a missing/blank/wrong-typed answer must never be silently
+    # turned into a canned placeholder and persisted as a real exchange.
+    # Treat it as the same class of dependency failure as a transport
+    # error: 502, no DB row.
     if not isinstance(result, dict):
         raise HTTPException(
             502, f"Follow-up turn failed: TrueForge returned an unexpected response shape: {result!r}"

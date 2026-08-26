@@ -111,16 +111,12 @@ export interface AgentRun {
   status: string
   started_at: string
   completed_at: string | null
-  // Whether this run has a live TrueForge session a marketer can ask a
-  // follow-up question against. False for runs that used the direct-Gemini
-  // fallback path (no TrueForge session was created for them).
+  // False for runs that used the direct-Gemini fallback path (no session).
   can_ask_followup: boolean
 }
 
-// Shape is hand-mirrored in two other places with no shared contract or
-// codegen — keep in sync with backend/app/models/followup.py::AgentRunFollowup
-// and backend/app/schemas/agent_run.py::AgentRunFollowupOut. See
-// docs/DECISIONS.md for why this is hand-duplicated rather than generated.
+// Keep in sync with backend/app/models/followup.py::AgentRunFollowup and
+// backend/app/schemas/agent_run.py::AgentRunFollowupOut (no shared codegen).
 export interface AgentRunFollowup {
   id: string
   agent_run_id: string
@@ -202,11 +198,8 @@ export interface PipelineRanking {
   created_at: string
 }
 
-// Mirrors backend/app/models/tool_approval.py's ToolApprovalStatus, the
-// single source of truth for this contract (there is no shared codegen in
-// this repo — see docs/DECISIONS.md). Keep these three files in sync:
-// backend/app/models/tool_approval.py, backend/app/schemas/tool_approval.py,
-// and this one.
+// Mirrors backend/app/models/tool_approval.py's ToolApprovalStatus (no
+// shared codegen — keep both, plus schemas/tool_approval.py, in sync).
 export type ToolApprovalStatus = "pending" | "claimed" | "approved" | "rejected"
 
 export interface ToolApprovalRequest {
@@ -221,10 +214,8 @@ export interface ToolApprovalRequest {
   resolved_at: string | null
 }
 
-// Response body for POST /api/tool-approvals/{id}/approve|reject. `resolved`
-// is always the approval request that was just acted on; `followup` is set
-// only when the resumed TrueForge turn immediately hit another approval
-// gate, in which case the pipeline is still paused and not "done".
+// `followup` is set only when the resumed turn immediately hit another
+// approval gate (still paused, not "done").
 export interface ToolApprovalResolution {
   resolved: ToolApprovalRequest
   followup: ToolApprovalRequest | null

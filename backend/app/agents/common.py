@@ -23,14 +23,8 @@ logger = logging.getLogger("signalis.agents")
 class AgentPausedForToolApproval(Exception):
     """Raised by run_agent_reasoning when a TrueForge turn paused on a
     require_approval_for_tools gate instead of producing a final answer.
-
-    This is distinct from LLMError (a genuine failure) and a normal dict
-    return (a genuine success) — callers that don't expect a pause (every
-    agent except Persona Fit, at this build's scope) will simply never
-    trigger it, since none of their MCP server attachments set
-    require_approval_for_tools. Persona Fit's caller (app.services.pipeline)
-    catches this specifically to persist a ToolApprovalRequest and surface a
-    "paused, awaiting approval" outcome instead of crashing the pipeline run.
+    Only agents with a gated MCP attachment (currently Persona Fit) trigger
+    this; app.services.pipeline catches it to persist a ToolApprovalRequest.
     """
 
     def __init__(self, pending: list[PendingToolApproval]):
@@ -88,39 +82,27 @@ def run_agent_reasoning(
     skills: list[dict] | None = None,
     fallback_style_guidance: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
-    """Run one agent's reasoning step through the TrueForge harness so the
-    real agent loop (model calls, MCP tool discovery/execution, context
-    management) genuinely executes this step, rather than a bare model call.
+    """Run one agent's reasoning step through TrueForge (real agent loop:
+    model calls, MCP tool discovery/execution, context management) rather
+    than a bare model call.
 
-    Falls back to a direct Gemini/Hugging-Face call (app.core.llm) if
-    TrueForge is disabled or unreachable, so the pipeline still produces
-    real model reasoning when the local harness sidecar is not running —
-    this is a transport fallback, not a second reasoning path: both routes
-    execute the same prompt and schema.
+    Falls back to a direct Gemini/Hugging-Face call if TrueForge is
+    disabled or unreachable — same prompt and schema, a transport fallback
+    not a second reasoning path.
 
-    Returns (parsed_result, trueforge_session_id). The session_id is None
-    whenever the fallback path was used (there is no TrueForge session in
-    that case) — callers persist it on the AgentRun so a later marketer
-    follow-up question can be answered as a real continuation turn on the
-    same TrueForge session, with genuine conversational memory of this run's
-    own output, rather than a fresh one-shot call re-fed the context.
+    Returns (parsed_result, trueforge_session_id); session_id is None on
+    the fallback path (no TrueForge session exists there), and is what
+    later lets a follow-up question continue this exact session.
 
-    `skills` are name-only references to TrueForge skills already registered
-    via `app.core.trueforge.ensure_skill` (only the TrueForge path can use
-    them — a skill's full content loads on demand inside TrueForge's agent
-    loop, which the direct fallback path does not have). `fallback_style_guidance`,
-    if given, is appended to the system instruction only on the direct
-    fallback path, so a call whose craft guidance now lives entirely in a
-    TrueForge skill doesn't silently lose that guidance when TrueForge is
-    unavailable — mirrors the existing tool-stripping precedent below.
+    `skills` are name-only TrueForge skill references (fallback path can't
+    load them). `fallback_style_guidance`, if given, is appended to the
+    fallback instruction so craft guidance that now lives in a skill isn't
+    lost when TrueForge is unavailable.
 
-    Raises AgentPausedForToolApproval instead of returning if the TrueForge
-    turn paused on a require_approval_for_tools gate — this only happens for
-    agents whose mcp_servers config actually sets that field (Persona Fit,
-    at this build's scope). No fallback happens in that case: a pause is not
-    a transport failure, so it must not be silently retried through the
-    tool-less direct LLM path, which would just skip the approval gate
-    entirely.
+    Raises AgentPausedForToolApproval instead of returning if the turn
+    paused on a require_approval_for_tools gate — never falls back in that
+    case, since a pause isn't a transport failure and retrying through the
+    tool-less fallback would just skip the approval gate.
     """
     settings = get_settings()
     if settings.trueforge_enabled:
@@ -148,31 +130,18 @@ def run_agent_reasoning(
 
     fallback_instruction = system_instruction
     if mcp_servers:
-        # The direct fallback path has no tool access (only the TrueForge
-        # path does), so any tool-referencing instructions must be
-        # neutralized here — otherwise the model tries to "use" tools that
-        # do not exist in this call and answers incoherently instead of
-        # following the response schema.
+        # Neutralize tool-referencing instructions — the fallback path has
+        # no tool access, so leaving them in makes the model try to "use"
+        # tools that don't exist and answer incoherently.
         fallback_instruction = (
             f"{system_instruction}\n\nNo external tools are available for this request. "
             "Answer using only the information given in the prompt, and do not reference "
             "or attempt to call any tool."
         )
     if fallback_style_guidance and fallback_style_guidance not in fallback_instruction:
-        # Same rationale as the tool-stripping block above: the direct
-        # fallback path cannot load a TrueForge skill, so any craft guidance
-        # that now lives only in a skill must be injected here explicitly or
-        # this path regresses in output quality relative to the TrueForge path.
-        #
-        # The `not in` guard avoids double-injecting: when a caller (e.g.
-        # `run_outreach_planner`) has already folded the same guidance into
-        # `system_instruction` for the TrueForge-path instruction (skill
-        # registration failed this call — see
-        # `outreach_planner._ensure_style_guide_skill`), that guidance is
-        # already present here too, since `fallback_instruction` starts from
-        # `system_instruction`. Appending it again would send the model the
-        # same block of text twice on every direct-fallback call in that
-        # situation.
+        # `not in` avoids double-injecting when a caller (e.g.
+        # run_outreach_planner on a skill-registration failure) already
+        # folded this same guidance into system_instruction.
         fallback_instruction = f"{fallback_instruction}\n\n{fallback_style_guidance}"
 
     try:
@@ -197,42 +166,19 @@ def run_agent_reasoning_with_delegations(
     temperature: float = 0.3,
     fallback_instruction: str | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]] | None, bool]:
-    """Like `run_agent_reasoning`, but also returns the list of genuine
-    TrueForge subagent delegations (`create_sub_agent` calls) the root
-    agent's turn performed, as recorded on TrueForge's own session event
-    stream — see `app.core.trueforge._extract_subagent_delegations`.
+    """Like `run_agent_reasoning`, but also returns TrueForge subagent
+    delegations (`create_sub_agent` calls) the turn performed, read from
+    TrueForge's session events — see `_extract_subagent_delegations`.
 
-    Used by agents (currently only Prioritization) whose system instruction
-    asks the model to delegate parallel per-item work to subagents, so the
-    caller can persist real evidence that delegation happened rather than
-    just trusting the model's own narration of what it did. Only available
-    on the TrueForge path — dynamic subagent delegation is a TrueForge
-    runtime feature with no equivalent in the direct Gemini/HF fallback, so
-    when TrueForge is disabled/unreachable this falls back to
-    `run_agent_reasoning` with an empty delegations list, exactly like every
-    other agent's fallback behavior.
+    Subagent delegation has no fallback equivalent, so callers whose
+    instruction mandates a `create_sub_agent` call must pass
+    `fallback_instruction` — a version telling the model no delegation is
+    available on the direct-LLM path, so it doesn't try to call a
+    nonexistent tool or produce a non-delegated result indistinguishable
+    from a genuine one.
 
-    Unlike the plain single-phase agents, the Prioritization system
-    instruction *unconditionally mandates* the model call `create_sub_agent`
-    — a tool that simply does not exist on the direct Gemini/HF fallback
-    path. Reusing that instruction verbatim on the fallback (the way
-    `run_agent_reasoning` reuses tool-referencing instructions only when
-    `mcp_servers` is set) would make the model either answer incoherently
-    or silently produce a non-delegated ranking that looks identical to a
-    genuine delegated one. So callers whose instruction mandates delegation
-    must pass `fallback_instruction` — a rewritten version of
-    `system_instruction` that tells the model no subagent delegation tool
-    is available on this call and it must reason about every item directly
-    in this one turn instead. When that happens, this function returns
-    `is_delegated=False` alongside an empty delegations list so the caller
-    can mark the resulting output as degraded/non-delegated rather than
-    letting it look identical to a genuine delegated run.
-
-    Returns `(output, delegations, is_delegated)`, where `is_delegated` is
-    True only for a genuine TrueForge turn (delegation may still be empty
-    if the model chose not to delegate for a very small item count — that
-    is a model-behavior question the caller resolves via Finding 4's count
-    check, not a transport question this function answers).
+    Returns (output, delegations, is_delegated); is_delegated is True only
+    for a genuine TrueForge turn.
     """
     settings = get_settings()
     if settings.trueforge_enabled:
@@ -278,16 +224,11 @@ def resume_agent_reasoning(
     deny_reason: str | None = None,
 ) -> dict[str, Any]:
     """Resumes a TrueForge turn previously paused by run_agent_reasoning
-    raising AgentPausedForToolApproval, after a human has approved or
-    rejected the pending tool call.
+    raising AgentPausedForToolApproval, after a human decision.
 
-    Only handles the case where the resumed turn reaches a final answer or
-    a genuine TrueForge error. If a further tool call in the same turn also
-    needs approval (multiple gated tool calls back to back), this raises
-    AgentPausedForToolApproval again so the caller can persist a new pending
-    request rather than silently dropping it — the caller (the tool-approval
-    endpoint) is expected to treat that the same way it treats the first
-    pause.
+    Raises AgentPausedForToolApproval again if the resumed turn immediately
+    hits another gated tool call, so the caller can persist a new pending
+    request instead of silently dropping it.
     """
     try:
         result = resume_turn(

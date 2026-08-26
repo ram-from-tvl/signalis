@@ -74,13 +74,25 @@ lead — updating its understanding automatically whenever new signals arrive.
 - **Human approval**: every generated outreach plan, and any stage
   classification the model itself was unconfident about, is persisted as
   `pending_approval` and requires an explicit approve/reject action through
-  the API/UI before being treated as final. TrueForge separately supports a
-  native per-tool approval checkpoint (`require_approval_for_tools`, which
-  pauses a turn until a `user.tool_approval` is submitted) — this build does
-  not gate the enrichment tool behind it, since the application-level
-  plan/classification approval is the actual user-facing checkpoint that
-  matters for this product, but the primitive is real and demonstrated in
-  `docs/DECISIONS.md`.
+  the API/UI before being treated as final. TrueForge's native per-tool
+  approval checkpoint (`require_approval_for_tools`) is also wired in: the
+  Persona Fit agent's enrichment tool calls pause the turn until a marketer
+  approves or rejects them via `POST /api/tool-approvals/{id}/approve|reject`,
+  independent of the plan/classification checkpoint above.
+- **Subagents**: the Prioritization/Ranking agent delegates per-lead priority
+  assessment to TrueForge's built-in `create_sub_agent` tool, run in
+  parallel, then consolidates every subagent's result in the root agent's
+  own context to produce the final cross-lead ranking. Delegation evidence
+  (from TrueForge's session event stream) is persisted and surfaced on the
+  ranking API response.
+- **Skills**: the Outreach Planner's copywriting guidance lives in a
+  TrueForge skill (`app/agents/skills/outreach_copywriting_style_guide/`)
+  loaded on demand rather than re-sent in every prompt.
+- **Persistent sessions**: a marketer can ask a natural-language follow-up
+  question against any trace entry that ran through TrueForge
+  (`POST /api/leads/{lead_id}/agent-runs/{agent_run_id}/ask`), answered as a
+  genuine continuation turn on that run's own TrueForge session rather than
+  a fresh one-shot call.
 - **Frontend**: React 18 + Vite + TypeScript, Tailwind CSS, a component
   library built on Radix primitives in the shadcn/ui pattern (owned in this
   codebase, not an installed black box), React Router, TanStack Query,
@@ -99,15 +111,19 @@ trade-offs and how ambiguity in the brief was resolved, and
 backend/
   app/
     agents/        six agent modules (five-agent LangGraph pipeline plus the
-                   standalone Prioritization/Ranking agent)
-    api/routes/    FastAPI routers, one module per resource
+                   standalone Prioritization/Ranking agent), plus skills/
+                   (TrueForge skill content, e.g. outreach copywriting)
+    api/routes/    FastAPI routers, one module per resource (including
+                   tool_approvals.py and agent_followups.py)
     api/router.py  aggregates every router; app.main only mounts this one
     core/          config, the TrueForge HTTP client, the Gemini/HF LLM
                    fallback, the Daytona sandbox wrapper, and the one-time
                    TrueForge provider bootstrap script (trueforge_bootstrap.py)
     mcp_tools/     the remote MCP servers: firmographic enrichment tools and
                    the Tavily-backed live web-research tool
-    db/            SQLAlchemy session/base + demo data seeding
+    db/            SQLAlchemy session/base, demo data seeding, and
+                   migrations.py (additive-only, for the one column added to
+                   an already-existing table)
     models/        SQLAlchemy ORM models, one module per domain entity
     schemas/       Pydantic request/response schemas, one module per domain
     services/      ingestion + pipeline orchestration services
@@ -290,13 +306,22 @@ The app is served at `http://localhost:5173`.
   inside the configured Daytona sandbox; `agent_runs.output.signal_score_computed_via`
   records `"daytona"` or `"local"` depending on which path actually ran for
   that request.
-- **Human approval as a harness primitive**: separately from the
-  application-level approval workflow above, TrueForge's own
-  `require_approval_for_tools` mechanism (a real per-tool approval gate that
-  pauses a turn with `required_actions: [{"type": "tool.approval_required"}]`
-  until a `user.tool_approval` turn input is submitted) is demonstrated in
-  `docs/DECISIONS.md` as a capability of the runtime, distinct from the
-  product-level checkpoint the UI exposes.
+- **Human approval as a harness primitive**: the Persona Fit agent's
+  enrichment tools are gated by TrueForge's `require_approval_for_tools`.
+  When the model calls one, the turn pauses and a pending-approval card
+  appears inline on the Lead Detail page; approving resumes the same
+  TrueForge turn and lets Persona Fit's real result complete, rejecting
+  resumes with a denial and marks that run failed.
+- **Subagent delegation**: click "Rank Pipeline" on the Dashboard with
+  several classified leads present, then check the ranking response's
+  `subagent_delegation` field (or TrueForge's own session events at
+  `GET /api/v1/sessions/{id}/events`) to see genuine parallel
+  `create_sub_agent` delegations, one per lead, feeding into the root
+  agent's final consolidated order.
+- **Persistent-session follow-up**: on a lead's Agent Trace tab, ask a
+  follow-up question against any trace entry that ran through TrueForge —
+  the answer is a real continuation turn on that run's own session, not a
+  fresh call re-fed a summary of it.
 - **Pipeline-wide prioritization**: On the Dashboard, click "Rank Pipeline"
   to run the Prioritization/Ranking Agent over every currently-classified
   lead in one call. It returns a single contact-priority order with a

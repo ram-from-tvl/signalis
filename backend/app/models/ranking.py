@@ -21,19 +21,13 @@ class PipelineRanking(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_uuid)
     agent_run_id: Mapped[str | None] = mapped_column(ForeignKey("agent_runs.id"), nullable=True)
     ranked_leads: Mapped[list] = mapped_column(JSON, default=list)
-    # Each entry is a self-contained snapshot, not a pointer to live rows:
-    # {"lead_id": str, "rank": int, "reasoning": str, "name": str, "company": str,
-    #  "title": str, "stage": str, "confidence": float}
-    # Baking the stage/confidence/name in at write time means a snapshot never
-    # drifts if the lead is later reclassified, and reading it back needs no
-    # per-entry Lead/StageClassification lookups.
+    # Self-contained snapshot per entry: {lead_id, rank, reasoning, name,
+    # company, title, stage, confidence} — baked in at write time so it
+    # never drifts if the lead is later reclassified.
     summary: Mapped[str] = mapped_column(Text, default="")
-    # {"status": "delegated"|"partial"|"evidence_unavailable"|"not_delegated",
-    #  "used": bool, "subagent_count": int | None, "expected_count": int,
-    #  "subagents": list[dict]} — see app.agents.prioritization.run_prioritization.
-    # This snapshot is a pipeline-wide run (agent_run_id points at a run with
-    # lead_id=None), so the existing lead-scoped Agent Trace UI never
-    # surfaces it; baking it directly onto the ranking row is what makes it
-    # reachable from the ranking API response the frontend actually reads.
+    # {status, used, subagent_count, expected_count, subagents} — see
+    # app.agents.prioritization.run_prioritization. Baked onto the ranking
+    # row (rather than left on the pipeline-wide AgentRun, lead_id=None) so
+    # it's reachable from the ranking API response the frontend reads.
     subagent_delegation: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)

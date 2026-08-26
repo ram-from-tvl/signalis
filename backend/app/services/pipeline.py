@@ -29,20 +29,14 @@ from app.models import (
 
 class PipelinePausedForApproval(Exception):
     """Raised by run_pipeline_for_lead when a node's TrueForge turn paused
-    on a require_approval_for_tools gate (currently only possible from the
-    Persona Fit node). Carries the persisted ToolApprovalRequest row(s) so
-    the API layer can tell the caller exactly what is pending, instead of
-    the pipeline run looking like an ordinary failure.
+    on a require_approval_for_tools gate (currently only from Persona Fit).
+    Carries the persisted ToolApprovalRequest row(s) so the API layer can
+    report exactly what's pending instead of an ordinary failure.
 
-    Scope tradeoff (documented in docs/DECISIONS.md): approving the pending
-    tool call resumes and completes the Persona Fit step and persists its
-    real result, but does not automatically continue the rest of the graph
-    (buying stage -> outreach planner -> explainability) — the marketer
-    clicks the existing "Regenerate Plan" button to run the remaining steps
-    with the now-unblocked Persona Fit result already on record. Wiring full
-    mid-pipeline resumption would mean checkpointing and replaying partial
-    LangGraph state across an HTTP round trip, which is materially heavier
-    than this feature's scope justifies.
+    Approving the pending tool call resumes and completes the Persona Fit
+    step, but doesn't auto-continue the rest of the graph — the marketer
+    clicks "Regenerate Plan" to run the remaining steps with the now-
+    unblocked result already on record.
     """
 
     def __init__(self, requests: list[ToolApprovalRequest]):
@@ -84,11 +78,8 @@ def run_pipeline_for_lead(db: Session, lead: Lead) -> dict[str, Any]:
             }
         )
     except AgentPausedForToolApproval as exc:
-        # The AgentRun the Persona Fit node started is left in "running"
-        # status by run_persona_fit when it raises this — found here as the
-        # most recent running persona_fit run for this lead (there is at
-        # most one in flight per lead at a time, since the pipeline runs one
-        # lead's graph synchronously per call).
+        # run_persona_fit left this run "running" when it raised; at most
+        # one is in flight per lead since the graph runs synchronously.
         agent_run = db.execute(
             select(AgentRun)
             .where(AgentRun.lead_id == lead.id, AgentRun.agent_name == "persona_fit", AgentRun.status == "running")

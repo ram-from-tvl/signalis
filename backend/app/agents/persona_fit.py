@@ -64,20 +64,11 @@ RESPONSE_SCHEMA = {
 
 
 def _reusable_completed_run(db: Session, lead: Lead) -> AgentRun | None:
-    """Finds a persona_fit AgentRun for this lead that already completed
-    (typically via resume_persona_fit after a marketer approved a paused
-    tool call) but whose result has not yet been folded into any
-    StageClassification — i.e. "Regenerate Plan" hasn't run to completion
-    since it finished.
-
-    Without this, every "Regenerate Plan" click starts the whole graph from
-    scratch, and the graph's persona_fit node unconditionally calls
-    run_persona_fit again — re-registering the same require_approval_for_tools
-    gate and re-running the same enrichment tool calls, so a lead that just
-    got unblocked by an approval hits the identical approval gate again
-    instead of proceeding to buying-stage/plan generation with the result
-    that was already approved. Reusing the completed run's output here is
-    what actually lets the marketer's approval decision stick."""
+    """Finds a persona_fit AgentRun that already completed (typically via
+    resume_persona_fit after an approved tool call) but hasn't yet been
+    consumed by a StageClassification. Without this, a "Regenerate Plan"
+    click after an approval would hit the same approval gate again instead
+    of proceeding with the already-approved result."""
     run = db.execute(
         select(AgentRun)
         .where(
@@ -103,22 +94,13 @@ def run_persona_fit(
     db: Session, lead: Lead, persona: Persona | None, solution: Solution | None
 ) -> tuple[dict[str, Any], str | None]:
     """Runs the Persona Fit agent. May raise AgentPausedForToolApproval if
-    TrueForge paused the turn on the enrichment tool's approval gate — the
-    caller (app.services.pipeline) is responsible for catching that,
-    persisting a ToolApprovalRequest, and marking this AgentRun accordingly
-    rather than letting it look like a normal failure.
+    the turn paused on the enrichment tool's approval gate — the caller
+    (app.services.pipeline) persists a ToolApprovalRequest for that case.
 
-    Returns (result, agent_run_id). agent_run_id lets the caller record
-    which AgentRun backs a StageClassification (StageClassification.
-    based_on_agent_run_id) so a later "Regenerate Plan" click can tell this
-    particular result has already been consumed and knows to run a fresh
-    Persona Fit pass instead of reusing it forever.
-
-    If a prior run already completed for this lead (most commonly: a
-    marketer approved a previously-paused tool call, and resume_persona_fit
-    finished that run) and its result hasn't been consumed by a
-    classification yet, that result is reused instead of starting a brand
-    new TrueForge turn — see _reusable_completed_run."""
+    Returns (result, agent_run_id); the run id lets the caller record which
+    AgentRun backs a StageClassification. Reuses a prior completed run's
+    output instead of starting a new turn if one exists unconsumed — see
+    _reusable_completed_run."""
     reusable = _reusable_completed_run(db, lead)
     if reusable is not None:
         return reusable.output, reusable.id
@@ -139,10 +121,8 @@ def run_persona_fit(
             mcp_servers=_MCP_SERVERS,
         )
     except AgentPausedForToolApproval:
-        # Leave the AgentRun in "running" status — it is neither completed
-        # nor failed yet. The tool-approval endpoint calls finish_run once a
-        # human resolves the pending request (approve -> completed with the
-        # real result, reject -> failed).
+        # Left "running" — the tool-approval endpoint calls finish_run once
+        # a human resolves the pending request.
         raise
     except LLMError as exc:
         finish_run(db, run, output={"error": str(exc)}, reasoning=str(exc), status="failed")
@@ -186,17 +166,12 @@ def resume_persona_fit(
     approve: bool,
     deny_reason: str | None = None,
 ) -> dict[str, Any]:
-    """Resumes a previously paused Persona Fit AgentRun after a human has
-    approved or rejected the pending enrichment tool call, and finishes the
-    run exactly as run_persona_fit would have if it had never paused.
+    """Resumes a previously paused Persona Fit AgentRun after a human
+    decision, finishing the run as run_persona_fit would have.
 
-    A denial (approve=False) always finishes the run as "failed", even if
-    the resumed TrueForge turn still produced a normal-looking JSON result
-    (model-dependent: some models answer anyway after a denial instead of
-    erroring out). The tool-approval endpoint's reject action promises the
-    marketer that rejecting a tool call fails the run — that must hold
-    regardless of how the resumed model happens to respond to the denial,
-    not just in the "running" branch of a caller-side status check."""
+    A denial always finishes the run as "failed", even if the resumed turn
+    produced a normal-looking result (some models answer anyway after a
+    denial instead of erroring out)."""
     try:
         result = resume_agent_reasoning(
             trueforge_agent_name=TRUEFORGE_AGENT_NAME,

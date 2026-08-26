@@ -63,33 +63,21 @@ def ensure_agent(
     """Create the named TrueForge agent, or update its manifest in place if
     it already exists.
 
-    TrueForge agent names are unique (immutable *names*), but the manifest
-    itself is mutable via `PUT /api/v1/agents/{agent_id}` — this matters for
-    config that needs to take effect on an agent that was already registered
-    by an earlier run, e.g. `require_approval_for_tools`, which MCP servers
-    are attached, or this PR's `skills` attachment and
-    `config.sandbox.enabled` change: without updating in place, an agent
-    registered by any prior run (the common case on a long-lived local
-    TrueForge instance) would keep running with its old manifest forever,
-    since the create-time POST silently no-ops on 409.
+    Agent names are unique but the manifest is mutable via
+    `PUT /api/v1/agents/{agent_id}`; without updating in place, config
+    changes (MCP servers, require_approval_for_tools, skills) would never
+    take effect on an agent registered by an earlier run, since create
+    silently no-ops on 409.
 
-    `skills` is a list of name-only references (e.g. `[{"name": "outreach-
-    copywriting-style-guide"}]`) to skills already registered via
-    `ensure_skill`. Per TrueForge's manifest schema, attaching skills
-    requires the agent's sandbox to be enabled, so passing a non-empty
-    `skills` here also flips `config.sandbox.enabled` to `True` for this
-    agent.
+    `skills` are name-only references to skills already registered via
+    `ensure_skill`; attaching any requires the agent's sandbox enabled, so a
+    non-empty `skills` also flips `config.sandbox.enabled`.
 
-    `skills=None` ("caller has no opinion" — e.g. this call's skill
-    registration failed and the caller doesn't know whether skills were
-    previously attached) is deliberately distinct from `skills=[]`
-    ("caller explicitly wants no skills attached"). On first-time creation
-    there is no existing manifest to preserve, so both behave the same (no
-    skills key, sandbox disabled). On an update to an already-existing
-    agent, `skills=None` instead *preserves* whatever skills/sandbox config
-    the existing manifest already has, so a transient skill-registration
-    failure on one call can never silently strip skills a previous,
-    successful call had already attached — see `_update_agent`.
+    `skills=None` ("no opinion", e.g. this call's registration failed) is
+    distinct from `skills=[]` ("explicitly no skills"): on update,
+    `skills=None` preserves the existing manifest's skills/sandbox config
+    instead of overwriting them, so a transient registration failure can't
+    silently strip a previously-attached skill — see `_update_agent`.
     """
     manifest: dict[str, Any] = {
         "model": {"name": model},
@@ -135,18 +123,11 @@ def _start_turn(session_id: str, message: str, *, label: str) -> str:
 
 def _update_agent(name: str, manifest: dict[str, Any], *, skills_explicit: bool) -> None:
     """PUT-updates an already-registered agent's manifest so config changes
-    (e.g. require_approval_for_tools, a newly attached MCP server, or this
-    PR's skills attachment / sandbox enablement) actually take effect,
-    rather than silently no-op'ing because the agent already existed.
+    actually take effect instead of no-op'ing on 409.
 
-    `skills_explicit=False` means the caller passed `skills=None` to
-    `ensure_agent` — it has no opinion on skills this call (typically
-    because skill registration failed upstream), so this preserves the
-    existing agent's current `skills`/`config.sandbox.enabled` instead of
-    overwriting them with the caller's skills-less manifest. Without this,
-    a single failed skill-registration attempt on an agent that was
-    previously successfully attached to a skill would silently regress it
-    back to skill-less on the very next run.
+    `skills_explicit=False` (caller passed `skills=None`) preserves the
+    existing agent's current skills/sandbox config instead of overwriting
+    it with a skills-less manifest — see `ensure_agent`.
     """
     try:
         get_resp = httpx.get(f"{_base_url()}/api/v1/agents", timeout=15.0)
@@ -178,15 +159,9 @@ def _update_agent(name: str, manifest: dict[str, Any], *, skills_explicit: bool)
     except TrueForgeError:
         raise
     except (httpx.HTTPError, KeyError, ValueError, TypeError, AttributeError) as exc:
-        # ValueError covers `get_resp.json()` raising `json.JSONDecodeError`
-        # on a malformed (but 2xx) response body from the list-agents
-        # endpoint; TypeError/AttributeError cover an unexpected response
-        # shape, e.g. `data` not being a list, or an entry not being a dict
-        # (`for a in agents` / `a.get("name")` above). Without catching
-        # these too, a malformed dependency response escapes as a raw
-        # ValueError/TypeError/AttributeError instead of TrueForgeError, so
-        # `run_agent_reasoning`'s `except TrueForgeError` never triggers and
-        # the direct-LLM fallback never runs.
+        # Also catches JSON-decode/shape errors on the response so a
+        # malformed dependency reply can't escape as a raw exception and
+        # bypass run_agent_reasoning's except-TrueForgeError fallback.
         raise TrueForgeError(f"Failed to update TrueForge agent {name}: {exc}") from exc
 
 
@@ -195,19 +170,12 @@ def ensure_skill(
 ) -> None:
     """Register a git-backed TrueForge skill if it does not already exist.
 
-    TrueForge skills are name/description references whose full instructional
-    content ("SKILL.md") lives in a git repository TrueForge clones into an
-    agent's sandbox on demand — there is no "post raw content" registration
-    shape in the real API (verified against the live OpenAPI schema at
-    /api/v1/docs: `SkillManifest.type` is a `"git"`-only enum and `url` is
-    regex-constrained to a GitHub/GitLab HTTPS URL). Only the skill's
-    name/description are loaded into an agent's base context; the full
-    `SKILL.md` content is fetched from the repo only when the model decides
-    the task needs it.
+    TrueForge skills are git-backed only (SkillManifest.type is a
+    "git"-only enum; no raw-content registration shape). Only name/
+    description load into an agent's base context; SKILL.md content is
+    fetched from the repo on demand when the model decides it's needed.
 
-    Like `ensure_agent`, this treats "already exists" as success rather than
-    trying to update in place, matching TrueForge's actual conflict response
-    (HTTP 409, "Skill name already exists").
+    Treats "already exists" (409) as success, matching `ensure_agent`.
     """
     manifest: dict[str, Any] = {
         "type": "git",
@@ -430,39 +398,22 @@ def run_turn(
     tuple[dict[str, Any] | list[PendingToolApproval], str]
     | tuple[dict[str, Any] | list[PendingToolApproval], str, list[dict[str, Any]] | None]
 ):
-    """Create a brand-new TrueForge session, run one user-message turn on
-    it, and return the parsed JSON object from the model's final response —
-    or, if the turn paused on a `require_approval_for_tools` gate — a list of
-    `PendingToolApproval` describing the tool call(s) awaiting a human
-    decision — together with the session_id that produced it.
+    """Create a new TrueForge session, run one user-message turn, and return
+    (result, session_id) — result is the parsed JSON answer, or a list of
+    `PendingToolApproval` if the turn paused on a `require_approval_for_tools`
+    gate. session_id is always returned so callers can persist it and later
+    continue the conversation via run_followup_turn/resume_turn.
 
-    Callers that don't expect a pause (most agents, which have no
-    approval-gated tools) will simply never see the list case.
-
-    The session_id is always returned (rather than discarded) so callers can
-    persist it and later resume genuine conversational memory of this turn
-    via run_followup_turn or resume_turn — TrueForge keeps this session's
-    state in its own store independent of this call returning.
-
-    If ``with_delegations`` is True, a third element is also returned:
-    ``(result, session_id, subagent_delegations)``, where
-    ``subagent_delegations`` is a list of genuine ``create_sub_agent``
-    delegations TrueForge itself recorded for this turn (empty if the model
-    chose not to delegate) — see ``_extract_subagent_delegations``.
-
-    The turn's own success is judged independently of that events fetch: if
-    the turn completes and parses successfully but the *subsequent*,
-    purely-observability events fetch fails (see ``_get_session_events``),
-    this does NOT raise — a metadata-fetch failure must never discard an
-    otherwise-valid result and force the caller into a full (possibly
-    different) rerun. Instead it returns the successful result with
-    ``subagent_delegations=None``, a sentinel distinct from "no delegation
-    occurred" (``[]``) that callers should persist as "delegation evidence
-    unavailable/error", not silently treat as zero delegations.
+    If `with_delegations` is True, also fetches session events and returns
+    a third element: subagent delegations TrueForge recorded for this turn
+    (see `_extract_subagent_delegations`), or `None` if that fetch failed —
+    a sentinel distinct from `[]` (no delegation occurred). This never
+    raises: a metadata-fetch failure after a successful turn must not
+    discard a valid result and force a rerun.
 
     Raises TrueForgeError on any transport failure for the turn itself, a
     turn that ends in error, or non-JSON model output when no approval was
-    pending. A failure to fetch/parse the events stream never raises here.
+    pending.
     """
     try:
         session_resp = httpx.post(
@@ -497,19 +448,14 @@ def run_turn(
 
 
 def run_followup_turn(session_id: str, message: str) -> dict[str, Any] | list[PendingToolApproval]:
-    """Run one more user-message turn on an EXISTING TrueForge session and
-    return the parsed JSON object from the model's response — or a list of
-    PendingToolApproval if this turn also paused on an approval gate.
-
-    Unlike run_turn, this never calls POST /api/v1/sessions — it posts
-    straight to /api/v1/sessions/{session_id}/turns, so the model genuinely
-    continues the conversation it already had (its own prior reasoning is
-    still in context, held by TrueForge's own session store), rather than
-    being re-fed a fresh restatement of that context in a brand-new session.
+    """Run one more turn on an EXISTING session and return the parsed JSON
+    answer, or a list of PendingToolApproval if it paused on an approval
+    gate. Posts directly to /sessions/{id}/turns (never creates a new
+    session), so the model continues its own prior reasoning rather than
+    being re-fed a fresh restatement of it.
 
     Raises TrueForgeError under the same conditions as run_turn, plus if
-    the session_id no longer exists on the TrueForge side (e.g. its store
-    was cleared).
+    session_id no longer exists on the TrueForge side.
     """
     label = f"session {session_id}"
     turn_id = _start_turn(session_id, message, label=label)
