@@ -93,7 +93,9 @@ def _update_agent(name: str, manifest: dict[str, Any]) -> None:
         get_resp = httpx.get(f"{_base_url()}/api/v1/agents", timeout=15.0)
         get_resp.raise_for_status()
         agents = get_resp.json()["data"]
-        match = next((a for a in agents if a["name"] == name), None)
+        if not isinstance(agents, list):
+            raise TrueForgeError(f"TrueForge agent list response had non-list 'data': {agents!r}")
+        match = next((a for a in agents if a.get("name") == name), None)
         if match is None:
             raise TrueForgeError(f"Agent {name} reported as already existing but not found in agent list")
         agent_id = match["id"]
@@ -105,7 +107,9 @@ def _update_agent(name: str, manifest: dict[str, Any]) -> None:
         )
         put_resp.raise_for_status()
         logger.info("Updated TrueForge agent %s manifest", name)
-    except (httpx.HTTPError, KeyError) as exc:
+    except TrueForgeError:
+        raise
+    except (httpx.HTTPError, KeyError, TypeError, ValueError, AttributeError) as exc:
         raise TrueForgeError(f"Failed to update TrueForge agent {name}: {exc}") from exc
 
 
@@ -126,8 +130,11 @@ def _poll_turn_to_done(agent_name: str, session_id: str, turn_id: str) -> dict[s
             poll = httpx.get(f"{_base_url()}/api/v1/sessions/{session_id}/turns/{turn_id}", timeout=15.0)
             poll.raise_for_status()
             state = poll.json()["data"]["state"]
-        except (httpx.HTTPError, KeyError) as exc:
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
             raise TrueForgeError(f"Failed to poll TrueForge turn for {agent_name}: {exc}") from exc
+
+        if not isinstance(state, dict):
+            raise TrueForgeError(f"TrueForge turn poll for {agent_name} returned non-object state: {state!r}")
 
         status = state.get("status")
         if status == "done":
@@ -186,26 +193,31 @@ def _resolve_turn_result(
     """Given a "done" turn state, either returns the parsed final JSON
     answer, or a list of PendingToolApproval if the turn paused awaiting
     tool approval instead of producing one."""
-    required_actions = state.get("required_actions") or []
-    if required_actions:
-        pending = _extract_pending_approvals(agent_name, session_id, turn_id, state)
-        if pending:
-            return pending
-        # A required_actions entry TrueForge didn't tag as tool.approval_required
-        # (e.g. mcp.auth_required, tool.response_required) — this client only
-        # knows how to resume tool-approval pauses.
-        raise TrueForgeError(
-            f"TrueForge turn for {agent_name} paused on an unsupported required action: {required_actions}"
-        )
+    try:
+        required_actions = state.get("required_actions") or []
+        if required_actions:
+            pending = _extract_pending_approvals(agent_name, session_id, turn_id, state)
+            if pending:
+                return pending
+            # A required_actions entry TrueForge didn't tag as tool.approval_required
+            # (e.g. mcp.auth_required, tool.response_required) — this client only
+            # knows how to resume tool-approval pauses.
+            raise TrueForgeError(
+                f"TrueForge turn for {agent_name} paused on an unsupported required action: {required_actions}"
+            )
 
-    output = state.get("output")
-    if output is None:
-        raise TrueForgeError(f"TrueForge turn for {agent_name} finished with no output and no required actions")
-    content = output.get("content", "")
-    parsed = _extract_json_object(content)
-    if parsed is None:
-        raise TrueForgeError(f"TrueForge agent {agent_name} returned non-JSON output: {content!r}")
-    return parsed
+        output = state.get("output")
+        if output is None:
+            raise TrueForgeError(f"TrueForge turn for {agent_name} finished with no output and no required actions")
+        content = output.get("content", "")
+        parsed = _extract_json_object(content)
+        if parsed is None:
+            raise TrueForgeError(f"TrueForge agent {agent_name} returned non-JSON output: {content!r}")
+        return parsed
+    except TrueForgeError:
+        raise
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise TrueForgeError(f"TrueForge turn for {agent_name} returned a malformed response: {exc}") from exc
 
 
 def run_turn(agent_name: str, message: str) -> dict[str, Any] | list[PendingToolApproval]:
@@ -236,7 +248,7 @@ def run_turn(agent_name: str, message: str) -> dict[str, Any] | list[PendingTool
         )
         turn_resp.raise_for_status()
         turn_id = turn_resp.json()["data"]["id"]
-    except (httpx.HTTPError, KeyError) as exc:
+    except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
         raise TrueForgeError(f"Failed to start TrueForge turn for {agent_name}: {exc}") from exc
 
     state = _poll_turn_to_done(agent_name, session_id, turn_id)
@@ -284,7 +296,7 @@ def resume_turn(
         )
         turn_resp.raise_for_status()
         turn_id = turn_resp.json()["data"]["id"]
-    except (httpx.HTTPError, KeyError) as exc:
+    except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
         raise TrueForgeError(f"Failed to resume TrueForge turn for {agent_name}: {exc}") from exc
 
     state = _poll_turn_to_done(agent_name, session_id, turn_id)

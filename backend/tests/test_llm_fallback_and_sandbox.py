@@ -219,6 +219,97 @@ def test_ensure_agent_updates_manifest_when_agent_already_exists():
     ]
 
 
+def test_update_agent_wraps_malformed_json_as_trueforge_error():
+    """Regression test for "Malformed responses bypass fallback": a
+    non-list `data` value (or invalid JSON) from GET /api/v1/agents used to
+    escape _update_agent as a raw TypeError/JSONDecodeError, which
+    run_agent_reasoning's `except TrueForgeError` fallback boundary doesn't
+    catch — turning a recoverable dependency response failure into an
+    unhandled 500 instead of falling back to the direct LLM call."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: some-agent"}}'
+
+    malformed_list_response = MagicMock()
+    malformed_list_response.raise_for_status = MagicMock()
+    malformed_list_response.json.return_value = {"data": "not-a-list"}
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=malformed_list_response):
+        with pytest.raises(TrueForgeError):
+            ensure_agent("some-agent", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+
+def test_update_agent_wraps_invalid_json_body_as_trueforge_error():
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: some-agent"}}'
+
+    invalid_json_response = MagicMock()
+    invalid_json_response.raise_for_status = MagicMock()
+    invalid_json_response.json.side_effect = json.JSONDecodeError("bad json", "doc", 0)
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=invalid_json_response):
+        with pytest.raises(TrueForgeError):
+            ensure_agent("some-agent", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+
+def test_run_agent_reasoning_falls_back_when_update_agent_returns_malformed_json():
+    """The end-to-end version of the two tests above: run_agent_reasoning's
+    fallback boundary (except TrueForgeError) must actually trigger for a
+    malformed dependency response, not just the low-level helper raising the
+    right exception type in isolation."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: some-agent"}}'
+
+    malformed_list_response = MagicMock()
+    malformed_list_response.raise_for_status = MagicMock()
+    malformed_list_response.json.return_value = {"data": None}
+
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=malformed_list_response), \
+         patch("app.core.llm._call_gemini_json", return_value={"stage": "mid", "confidence": 0.5}) as gemini:
+        mock_settings.return_value.trueforge_enabled = True
+        result = run_agent_reasoning(
+            trueforge_agent_name="some-agent",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction="reason",
+            prompt="data",
+            response_schema=SCHEMA,
+        )
+    assert result == {"stage": "mid", "confidence": 0.5}
+    gemini.assert_called_once()
+
+
+def test_poll_turn_wraps_malformed_state_as_trueforge_error():
+    from app.core.trueforge import _poll_turn_to_done
+
+    malformed_poll = MagicMock()
+    malformed_poll.raise_for_status = MagicMock()
+    malformed_poll.json.return_value = {"data": {"state": "not-a-dict"}}
+
+    with patch("httpx.get", return_value=malformed_poll):
+        with pytest.raises(TrueForgeError):
+            _poll_turn_to_done("some-agent", "sess-1", "turn-1")
+
+
+def test_resolve_turn_result_wraps_malformed_required_actions_as_trueforge_error():
+    from app.core.trueforge import _resolve_turn_result
+
+    # `tool_calls` inside a required_actions entry missing the expected
+    # "id" key used to raise a raw KeyError out of _extract_pending_approvals.
+    state = {
+        "status": "done",
+        "required_actions": [{"type": "tool.approval_required", "tool_calls": [{"not_id": "x"}]}],
+        "output": {"tool_calls": []},
+    }
+    with pytest.raises(TrueForgeError):
+        _resolve_turn_result("some-agent", "sess-1", "turn-1", state)
+
+
 def test_run_turn_returns_pending_approvals_when_turn_pauses():
     """Regression test for the dead "requires_action" check: TrueForge
     actually reports status == "done" with a populated required_actions
