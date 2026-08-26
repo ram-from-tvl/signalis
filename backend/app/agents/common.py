@@ -85,6 +85,8 @@ def run_agent_reasoning(
     response_schema: dict[str, Any],
     temperature: float = 0.3,
     mcp_servers: list[dict] | None = None,
+    skills: list[dict] | None = None,
+    fallback_style_guidance: str | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     """Run one agent's reasoning step through the TrueForge harness so the
     real agent loop (model calls, MCP tool discovery/execution, context
@@ -102,6 +104,15 @@ def run_agent_reasoning(
     follow-up question can be answered as a real continuation turn on the
     same TrueForge session, with genuine conversational memory of this run's
     own output, rather than a fresh one-shot call re-fed the context.
+
+    `skills` are name-only references to TrueForge skills already registered
+    via `app.core.trueforge.ensure_skill` (only the TrueForge path can use
+    them — a skill's full content loads on demand inside TrueForge's agent
+    loop, which the direct fallback path does not have). `fallback_style_guidance`,
+    if given, is appended to the system instruction only on the direct
+    fallback path, so a call whose craft guidance now lives entirely in a
+    TrueForge skill doesn't silently lose that guidance when TrueForge is
+    unavailable — mirrors the existing tool-stripping precedent below.
 
     Raises AgentPausedForToolApproval instead of returning if the TrueForge
     turn paused on a require_approval_for_tools gate — this only happens for
@@ -122,6 +133,7 @@ def run_agent_reasoning(
                     f"JSON schema exactly, and nothing else: {json.dumps(response_schema)}"
                 ),
                 mcp_servers=mcp_servers,
+                skills=skills,
             )
             result, session_id = run_turn(trueforge_agent_name, prompt)
             if isinstance(result, list):
@@ -146,6 +158,22 @@ def run_agent_reasoning(
             "Answer using only the information given in the prompt, and do not reference "
             "or attempt to call any tool."
         )
+    if fallback_style_guidance and fallback_style_guidance not in fallback_instruction:
+        # Same rationale as the tool-stripping block above: the direct
+        # fallback path cannot load a TrueForge skill, so any craft guidance
+        # that now lives only in a skill must be injected here explicitly or
+        # this path regresses in output quality relative to the TrueForge path.
+        #
+        # The `not in` guard avoids double-injecting: when a caller (e.g.
+        # `run_outreach_planner`) has already folded the same guidance into
+        # `system_instruction` for the TrueForge-path instruction (skill
+        # registration failed this call — see
+        # `outreach_planner._ensure_style_guide_skill`), that guidance is
+        # already present here too, since `fallback_instruction` starts from
+        # `system_instruction`. Appending it again would send the model the
+        # same block of text twice on every direct-fallback call in that
+        # situation.
+        fallback_instruction = f"{fallback_instruction}\n\n{fallback_style_guidance}"
 
     try:
         result = generate_json(

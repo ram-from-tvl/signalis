@@ -51,23 +51,54 @@ def _base_url() -> str:
     return get_settings().trueforge_url.rstrip("/")
 
 
-def ensure_agent(name: str, *, model: str, instructions: str, mcp_servers: list[dict] | None = None) -> None:
+def ensure_agent(
+    name: str,
+    *,
+    model: str,
+    instructions: str,
+    mcp_servers: list[dict] | None = None,
+    skills: list[dict] | None = None,
+) -> None:
     """Create the named TrueForge agent, or update its manifest in place if
     it already exists.
 
-    TrueForge agent names are unique, but the manifest itself is mutable via
-    `PUT /api/v1/agents/{agent_id}` — this matters for config (like
-    `require_approval_for_tools`, or which MCP servers are attached) that
-    needs to take effect on an agent that was already registered by an
-    earlier run.
+    TrueForge agent names are unique (immutable *names*), but the manifest
+    itself is mutable via `PUT /api/v1/agents/{agent_id}` — this matters for
+    config that needs to take effect on an agent that was already registered
+    by an earlier run, e.g. `require_approval_for_tools`, which MCP servers
+    are attached, or this PR's `skills` attachment and
+    `config.sandbox.enabled` change: without updating in place, an agent
+    registered by any prior run (the common case on a long-lived local
+    TrueForge instance) would keep running with its old manifest forever,
+    since the create-time POST silently no-ops on 409.
+
+    `skills` is a list of name-only references (e.g. `[{"name": "outreach-
+    copywriting-style-guide"}]`) to skills already registered via
+    `ensure_skill`. Per TrueForge's manifest schema, attaching skills
+    requires the agent's sandbox to be enabled, so passing a non-empty
+    `skills` here also flips `config.sandbox.enabled` to `True` for this
+    agent.
+
+    `skills=None` ("caller has no opinion" — e.g. this call's skill
+    registration failed and the caller doesn't know whether skills were
+    previously attached) is deliberately distinct from `skills=[]`
+    ("caller explicitly wants no skills attached"). On first-time creation
+    there is no existing manifest to preserve, so both behave the same (no
+    skills key, sandbox disabled). On an update to an already-existing
+    agent, `skills=None` instead *preserves* whatever skills/sandbox config
+    the existing manifest already has, so a transient skill-registration
+    failure on one call can never silently strip skills a previous,
+    successful call had already attached — see `_update_agent`.
     """
     manifest: dict[str, Any] = {
         "model": {"name": model},
         "instructions": instructions,
-        "config": {"sandbox": {"enabled": False}},
+        "config": {"sandbox": {"enabled": bool(skills)}},
     }
     if mcp_servers:
         manifest["mcp_servers"] = mcp_servers
+    if skills:
+        manifest["skills"] = skills
 
     try:
         resp = httpx.post(
@@ -79,7 +110,7 @@ def ensure_agent(name: str, *, model: str, instructions: str, mcp_servers: list[
             logger.info("Registered TrueForge agent %s", name)
             return
         if resp.status_code == 409 and "already exists" in resp.text.lower():
-            _update_agent(name, manifest)
+            _update_agent(name, manifest, skills_explicit=skills is not None)
             return
         resp.raise_for_status()
     except httpx.HTTPError as exc:
@@ -101,11 +132,21 @@ def _start_turn(session_id: str, message: str, *, label: str) -> str:
         raise TrueForgeError(f"Failed to start TrueForge turn for {label}: {exc}") from exc
 
 
-def _update_agent(name: str, manifest: dict[str, Any]) -> None:
+def _update_agent(name: str, manifest: dict[str, Any], *, skills_explicit: bool) -> None:
     """PUT-updates an already-registered agent's manifest so config changes
-    (e.g. require_approval_for_tools, or a newly attached MCP server)
-    actually take effect, rather than silently no-op'ing because the agent
-    already existed."""
+    (e.g. require_approval_for_tools, a newly attached MCP server, or this
+    PR's skills attachment / sandbox enablement) actually take effect,
+    rather than silently no-op'ing because the agent already existed.
+
+    `skills_explicit=False` means the caller passed `skills=None` to
+    `ensure_agent` — it has no opinion on skills this call (typically
+    because skill registration failed upstream), so this preserves the
+    existing agent's current `skills`/`config.sandbox.enabled` instead of
+    overwriting them with the caller's skills-less manifest. Without this,
+    a single failed skill-registration attempt on an agent that was
+    previously successfully attached to a skill would silently regress it
+    back to skill-less on the very next run.
+    """
     try:
         get_resp = httpx.get(f"{_base_url()}/api/v1/agents", timeout=15.0)
         get_resp.raise_for_status()
@@ -117,6 +158,15 @@ def _update_agent(name: str, manifest: dict[str, Any]) -> None:
             raise TrueForgeError(f"Agent {name} reported as already existing but not found in agent list")
         agent_id = match["id"]
 
+        if not skills_explicit:
+            existing_manifest = match.get("manifest") or {}
+            existing_skills = existing_manifest.get("skills")
+            existing_sandbox = (existing_manifest.get("config") or {}).get("sandbox", {}).get("enabled")
+            if existing_skills:
+                manifest["skills"] = existing_skills
+            if existing_sandbox is not None:
+                manifest.setdefault("config", {}).setdefault("sandbox", {})["enabled"] = existing_sandbox
+
         put_resp = httpx.put(
             f"{_base_url()}/api/v1/agents/{agent_id}",
             json={"manifest": manifest},
@@ -126,8 +176,61 @@ def _update_agent(name: str, manifest: dict[str, Any]) -> None:
         logger.info("Updated TrueForge agent %s manifest", name)
     except TrueForgeError:
         raise
-    except (httpx.HTTPError, KeyError, TypeError, ValueError, AttributeError) as exc:
+    except (httpx.HTTPError, KeyError, ValueError, TypeError, AttributeError) as exc:
+        # ValueError covers `get_resp.json()` raising `json.JSONDecodeError`
+        # on a malformed (but 2xx) response body from the list-agents
+        # endpoint; TypeError/AttributeError cover an unexpected response
+        # shape, e.g. `data` not being a list, or an entry not being a dict
+        # (`for a in agents` / `a.get("name")` above). Without catching
+        # these too, a malformed dependency response escapes as a raw
+        # ValueError/TypeError/AttributeError instead of TrueForgeError, so
+        # `run_agent_reasoning`'s `except TrueForgeError` never triggers and
+        # the direct-LLM fallback never runs.
         raise TrueForgeError(f"Failed to update TrueForge agent {name}: {exc}") from exc
+
+
+def ensure_skill(
+    name: str, *, repo_url: str, path: str, ref: str, description: str
+) -> None:
+    """Register a git-backed TrueForge skill if it does not already exist.
+
+    TrueForge skills are name/description references whose full instructional
+    content ("SKILL.md") lives in a git repository TrueForge clones into an
+    agent's sandbox on demand — there is no "post raw content" registration
+    shape in the real API (verified against the live OpenAPI schema at
+    /api/v1/docs: `SkillManifest.type` is a `"git"`-only enum and `url` is
+    regex-constrained to a GitHub/GitLab HTTPS URL). Only the skill's
+    name/description are loaded into an agent's base context; the full
+    `SKILL.md` content is fetched from the repo only when the model decides
+    the task needs it.
+
+    Like `ensure_agent`, this treats "already exists" as success rather than
+    trying to update in place, matching TrueForge's actual conflict response
+    (HTTP 409, "Skill name already exists").
+    """
+    manifest: dict[str, Any] = {
+        "type": "git",
+        "name": name,
+        "url": repo_url,
+        "path": path,
+        "ref": ref,
+        "description": description,
+    }
+
+    try:
+        resp = httpx.post(
+            f"{_base_url()}/api/v1/settings/skills",
+            json={"manifest": manifest},
+            timeout=15.0,
+        )
+        if resp.status_code == 201:
+            logger.info("Registered TrueForge skill %s", name)
+            return
+        if resp.status_code == 409 and "already exists" in resp.text.lower():
+            return
+        resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise TrueForgeError(f"Failed to register TrueForge skill {name}: {exc}") from exc
 
 
 def _poll_turn_to_done(agent_name: str, session_id: str, turn_id: str) -> dict[str, Any]:

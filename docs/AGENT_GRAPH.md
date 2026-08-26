@@ -109,7 +109,17 @@ below for the full pause/approve/reject mechanics.
    result, active persona, and active solution, and returns a 3-5 touchpoint
    micro-plan with day offsets, channels, content themes, and example
    message copy. The resulting `outreach_plans` row always starts as
-   `pending_approval`.
+   `pending_approval`. Its system instruction is deliberately task-mechanical
+   only (output schema, what lead/persona context to weigh, touchpoint
+   count/day-offset requirements); the actual copywriting craft guidance —
+   channel-appropriate tone, referencing a buying signal without sounding
+   surveillance-creepy, cadence structure, avoiding generic AI-sounding copy,
+   strong-vs-weak opening line examples — lives in a TrueForge **skill**
+   (`outreach-copywriting-style-guide`, `backend/app/agents/skills/
+   outreach_copywriting_style_guide/SKILL.md`) that this agent has access to
+   and consults on demand rather than re-sending on every call. See
+   `docs/DECISIONS.md` for why, and how the direct Gemini/HF fallback path
+   (which has no TrueForge skill access) is kept from regressing.
 
 6. **Explainability Agent** receives the structured outputs of all four
    prior agents plus the `requires_approval` flag, and synthesizes a
@@ -144,7 +154,12 @@ transport fallback, not a second reasoning path. Because the direct fallback
 has no MCP tool access, any tool-referencing instruction (Persona Fit's) is
 rewritten for that path specifically to tell the model no tools are
 available, rather than leaving it to try invoking tools that do not exist
-in that call.
+in that call. The same fallback also has no access to TrueForge **skills**
+(Outreach Planner's) — `run_agent_reasoning` accepts an optional
+`fallback_style_guidance` string appended to the fallback instruction
+specifically for this case, mirroring the tool-stripping precedent, so a
+prompt whose craft guidance now lives entirely in a skill doesn't silently
+lose that guidance on the fallback path.
 
 ## Human-approval checkpoint
 
