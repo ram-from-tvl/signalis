@@ -28,6 +28,9 @@ server = MCPServer(
 _TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 _MAX_RESULTS = 5
 _REQUEST_TIMEOUT_SECONDS = 10.0
+# Generous enough for any real company name or focus phrase, but bounded so a
+# runaway/malicious input can't blow up the query sent to Tavily or waste quota.
+_MAX_INPUT_LENGTH = 200
 
 
 @server.tool()
@@ -47,6 +50,31 @@ def search_company_news(company_name: str, focus: str | None = None) -> dict:
     philosophy for external dependencies (see app/core/sandbox.py and
     app/core/llm.py).
     """
+    company_name_clean = (company_name or "").strip()
+    if not company_name_clean:
+        return {
+            "company_name": company_name,
+            "results": [],
+            "queried": False,
+            "reason": "company_name is required and must not be blank",
+        }
+    if len(company_name_clean) > _MAX_INPUT_LENGTH:
+        return {
+            "company_name": company_name,
+            "results": [],
+            "queried": False,
+            "reason": f"company_name exceeds the {_MAX_INPUT_LENGTH}-character limit",
+        }
+
+    focus_clean = (focus or "").strip() or None
+    if focus_clean and len(focus_clean) > _MAX_INPUT_LENGTH:
+        return {
+            "company_name": company_name,
+            "results": [],
+            "queried": False,
+            "reason": f"focus exceeds the {_MAX_INPUT_LENGTH}-character limit",
+        }
+
     settings = get_settings()
     if not settings.tavily_api_key:
         return {
@@ -56,9 +84,9 @@ def search_company_news(company_name: str, focus: str | None = None) -> dict:
             "reason": "TAVILY_API_KEY is not configured",
         }
 
-    query = f"recent news, funding, hiring for {company_name}"
-    if focus:
-        query = f"{query} (focus: {focus})"
+    query = f"recent news, funding, hiring for {company_name_clean}"
+    if focus_clean:
+        query = f"{query} (focus: {focus_clean})"
 
     try:
         response = httpx.post(
@@ -91,7 +119,9 @@ def search_company_news(company_name: str, focus: str | None = None) -> dict:
         }
 
     try:
-        raw_results = data.get("results", [])
+        if "results" not in data or not isinstance(data["results"], list):
+            raise TypeError("'results' field is missing or not a list")
+        raw_results = data["results"]
         results = [
             {
                 "title": item.get("title", ""),

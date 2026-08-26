@@ -132,11 +132,60 @@ def test_signal_scoring_falls_back_to_local_when_sandbox_unavailable():
 
 
 def test_ensure_agent_treats_already_exists_conflict_as_success():
-    fake_response = MagicMock()
-    fake_response.status_code = 409
-    fake_response.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
-    with patch("httpx.post", return_value=fake_response):
+    fake_post_response = MagicMock()
+    fake_post_response.status_code = 409
+    fake_post_response.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
+
+    fake_get_response = MagicMock()
+    fake_get_response.json.return_value = {
+        "data": [{"id": "agent-123", "name": "signalis-persona-fit"}]
+    }
+
+    fake_put_response = MagicMock()
+
+    with patch("httpx.post", return_value=fake_post_response), \
+        patch("httpx.get", return_value=fake_get_response), \
+        patch("httpx.put", return_value=fake_put_response) as mock_put:
         ensure_agent("signalis-persona-fit", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+    # The already-exists path must PUT-update the manifest (not silently
+    # no-op), since config like a newly attached MCP server has to take
+    # effect on an agent that was already registered by an earlier run.
+    mock_put.assert_called_once()
+    assert mock_put.call_args.args[0] == "http://localhost:8790/api/v1/agents/agent-123"
+
+
+def test_ensure_agent_updates_manifest_when_agent_already_exists():
+    """Regression test for the PUT-update fix: previously ensure_agent
+    treated 409-already-exists as a no-op, so config changes (like adding
+    the signalis-research MCP server to Persona Fit) never took effect on
+    an already-registered agent. It must now look up the agent id and PUT
+    the new manifest."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
+
+    list_response = MagicMock()
+    list_response.raise_for_status = MagicMock()
+    list_response.json.return_value = {"data": [{"id": "agent-123", "name": "signalis-persona-fit"}]}
+
+    put_response = MagicMock()
+    put_response.raise_for_status = MagicMock()
+
+    with patch("httpx.post", return_value=create_conflict), \
+        patch("httpx.get", return_value=list_response), \
+        patch("httpx.put", return_value=put_response) as mock_put:
+        ensure_agent(
+            "signalis-persona-fit",
+            model="google-gemini/gemini-2-5-flash",
+            instructions="x",
+            mcp_servers=[{"name": "signalis-research", "enable_tools": ["@all"]}],
+        )
+
+    mock_put.assert_called_once()
+    assert mock_put.call_args.args[0] == "http://localhost:8790/api/v1/agents/agent-123"
+    updated_manifest = mock_put.call_args.kwargs["json"]["manifest"]
+    assert {"name": "signalis-research", "enable_tools": ["@all"]} in updated_manifest["mcp_servers"]
 
 
 def test_ensure_agent_raises_on_genuine_error():

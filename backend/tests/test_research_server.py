@@ -135,3 +135,77 @@ def test_search_company_news_returns_graceful_shape_on_malformed_response_shape(
 
     assert result["queried"] is False
     assert result["results"] == []
+
+
+def test_search_company_news_returns_graceful_shape_when_results_field_missing():
+    """Regression test: a malformed/incomplete Tavily payload that omits the
+    'results' field entirely must not be treated as a successful zero-result
+    search (queried: True). It must fall through to the same queried: False
+    malformed-response path as a wrong-typed 'results' field."""
+    fake_response = MagicMock()
+    fake_response.raise_for_status = MagicMock()
+    fake_response.json.return_value = {"some_other_field": "unexpected"}
+    with patch("app.mcp_tools.research_server.get_settings") as mock_settings, \
+         patch("httpx.post", return_value=fake_response):
+        mock_settings.return_value.tavily_api_key = "fake-tavily-key"
+        result = search_company_news("Acme Corp")
+
+    assert result["queried"] is False
+    assert result["results"] == []
+    assert "reason" in result
+
+
+def test_search_company_news_rejects_blank_company_name_without_calling_tavily():
+    with patch("httpx.post") as mock_post:
+        result = search_company_news("   ")
+
+    mock_post.assert_not_called()
+    assert result["queried"] is False
+    assert result["results"] == []
+    assert "reason" in result
+
+
+def test_search_company_news_rejects_missing_company_name_without_calling_tavily():
+    with patch("httpx.post") as mock_post:
+        result = search_company_news("")
+
+    mock_post.assert_not_called()
+    assert result["queried"] is False
+    assert result["results"] == []
+
+
+def test_search_company_news_rejects_oversized_company_name_without_calling_tavily():
+    with patch("httpx.post") as mock_post:
+        result = search_company_news("A" * 201)
+
+    mock_post.assert_not_called()
+    assert result["queried"] is False
+    assert result["results"] == []
+    assert "reason" in result
+
+
+def test_search_company_news_rejects_oversized_focus_without_calling_tavily():
+    with patch("app.mcp_tools.research_server.get_settings") as mock_settings, \
+         patch("httpx.post") as mock_post:
+        mock_settings.return_value.tavily_api_key = "fake-tavily-key"
+        result = search_company_news("Acme Corp", focus="x" * 201)
+
+    mock_post.assert_not_called()
+    assert result["queried"] is False
+    assert result["results"] == []
+    assert "reason" in result
+
+
+def test_search_company_news_accepts_company_name_at_max_length():
+    """Boundary check: exactly _MAX_INPUT_LENGTH characters must still be
+    accepted and reach Tavily (only over-the-limit input is rejected)."""
+    fake_response = MagicMock()
+    fake_response.raise_for_status = MagicMock()
+    fake_response.json.return_value = {"results": []}
+    with patch("app.mcp_tools.research_server.get_settings") as mock_settings, \
+         patch("httpx.post", return_value=fake_response) as mock_post:
+        mock_settings.return_value.tavily_api_key = "fake-tavily-key"
+        result = search_company_news("A" * 200)
+
+    mock_post.assert_called_once()
+    assert result["queried"] is True

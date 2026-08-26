@@ -32,10 +32,13 @@ def _base_url() -> str:
 
 
 def ensure_agent(name: str, *, model: str, instructions: str, mcp_servers: list[dict] | None = None) -> None:
-    """Create the named TrueForge agent if it does not already exist.
+    """Create the named TrueForge agent, or update its manifest in place if
+    it already exists.
 
-    Agents are immutable by name once created (per TrueForge's API), so this
-    treats "already exists" as success rather than trying to update in place.
+    TrueForge agent names are unique, but the manifest itself is mutable via
+    `PUT /api/v1/agents/{agent_id}` — this matters because agent config
+    (like which MCP servers are attached) needs to take effect even when the
+    agent was already registered by an earlier run.
     """
     manifest: dict[str, Any] = {
         "model": {"name": model},
@@ -55,10 +58,35 @@ def ensure_agent(name: str, *, model: str, instructions: str, mcp_servers: list[
             logger.info("Registered TrueForge agent %s", name)
             return
         if resp.status_code == 409 and "already exists" in resp.text.lower():
+            _update_agent(name, manifest)
             return
         resp.raise_for_status()
     except httpx.HTTPError as exc:
         raise TrueForgeError(f"Failed to register TrueForge agent {name}: {exc}") from exc
+
+
+def _update_agent(name: str, manifest: dict[str, Any]) -> None:
+    """PUT-updates an already-registered agent's manifest so config changes
+    (e.g. a newly attached MCP server) actually take effect, rather than
+    silently no-op'ing because the agent already existed."""
+    try:
+        get_resp = httpx.get(f"{_base_url()}/api/v1/agents", timeout=15.0)
+        get_resp.raise_for_status()
+        agents = get_resp.json()["data"]
+        match = next((a for a in agents if a["name"] == name), None)
+        if match is None:
+            raise TrueForgeError(f"Agent {name} reported as already existing but not found in agent list")
+        agent_id = match["id"]
+
+        put_resp = httpx.put(
+            f"{_base_url()}/api/v1/agents/{agent_id}",
+            json={"manifest": manifest},
+            timeout=15.0,
+        )
+        put_resp.raise_for_status()
+        logger.info("Updated TrueForge agent %s manifest", name)
+    except (httpx.HTTPError, KeyError) as exc:
+        raise TrueForgeError(f"Failed to update TrueForge agent {name}: {exc}") from exc
 
 
 def run_turn(agent_name: str, message: str) -> dict[str, Any]:
