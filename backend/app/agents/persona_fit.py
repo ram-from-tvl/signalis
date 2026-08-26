@@ -19,7 +19,7 @@ from app.agents.common import (
 )
 from app.core.config import get_settings
 from app.core.llm import LLMError
-from app.models import Lead, Persona, Solution
+from app.models import AgentRun, Lead, Persona, Solution
 
 TRUEFORGE_AGENT_NAME = "signalis-persona-fit"
 
@@ -115,7 +115,7 @@ def _build_prompt(lead: Lead, persona: Persona | None, solution: Solution | None
 
 def resume_persona_fit(
     db: Session,
-    run: Any,
+    run: AgentRun,
     *,
     session_id: str,
     thread_id: str,
