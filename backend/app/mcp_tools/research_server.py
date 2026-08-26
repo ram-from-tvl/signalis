@@ -2,12 +2,8 @@
 
 Run standalone (`python -m app.mcp_tools.research_server`) so TrueForge can
 reach it as a `remote` MCP server over HTTP, the same way
-`enrichment_server.py` is reached. Where the enrichment server stands in for
-a paid firmographic data vendor with an offline heuristic, this server calls
-a genuine third-party search API (Tavily, https://tavily.com) so an agent
-can ground its reasoning in real, current information about a company
-(funding news, hiring signals, product launches) rather than only the
-static CRM/ingested data already in this app's database.
+`enrichment_server.py` is reached. Calls the Tavily search API so an agent
+can ground its reasoning in current external information about a company.
 """
 from __future__ import annotations
 
@@ -35,20 +31,12 @@ _MAX_INPUT_LENGTH = 200
 
 @server.tool()
 def search_company_news(company_name: str, focus: str | None = None) -> dict:
-    """Search the live web for recent news about a company.
+    """Search the live web for recent news about a company via Tavily,
+    optionally narrowed by `focus` (e.g. "funding" or "hiring").
 
-    Calls the Tavily search API for recent news, funding, and hiring signals
-    about `company_name` (optionally narrowed by `focus`, e.g. "funding" or
-    "hiring"). This is a genuine external tool call, not an in-process
-    heuristic: it reaches a real third-party search provider so an agent can
-    ground its reasoning in current information rather than only the static
-    CRM/ingested data already in this app.
-
-    Never raises: if TAVILY_API_KEY is not configured, or the call fails or
-    times out, this returns a normalized "not queried" shape instead of
-    crashing the agent turn — matching this codebase's existing fallback
-    philosophy for external dependencies (see app/core/sandbox.py and
-    app/core/llm.py).
+    Never raises: if TAVILY_API_KEY is unset, or the call fails or times
+    out, returns a normalized "not queried" shape instead of crashing the
+    agent turn.
     """
     company_name_clean = (company_name or "").strip()
     if not company_name_clean:

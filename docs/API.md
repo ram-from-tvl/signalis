@@ -78,6 +78,20 @@ event arriving (e.g. a fresh pricing page visit). Does not itself
 re-classify the lead — follow with a call to `/api/pipeline/run` to see the
 stage and plan update in response to the new signal.
 
+### `POST /api/leads/{lead_id}/agent-runs/{agent_run_id}/ask`
+Body: `{"question": "..."}`, max 2000 characters. Asks a follow-up question
+against one `agent_runs` row, answered as a real continuation turn on that
+run's own TrueForge session (`trueforge_session_id`) rather than a fresh
+one-shot call. Returns `409` if that run has no TrueForge session (the
+direct Gemini/Hugging-Face fallback path was used, or TrueForge was
+disabled), `422` for a blank question, and `502` for any TrueForge
+dependency failure — transport error, or a malformed/missing/non-string
+`answer` in the response. No row is persisted on any failure path.
+
+### `GET /api/leads/{lead_id}/agent-runs/{agent_run_id}/followups`
+Lists the persisted question/answer history for one agent run, oldest
+first.
+
 ## Pipeline
 
 ### `POST /api/pipeline/run`
@@ -102,6 +116,32 @@ Body: `{"action": "approve"|"reject", "notes": "..."}`. Used for
 low-confidence stage classifications that were routed to
 `pending_approval` by the graph's conditional edge.
 
+## Tool approvals
+
+TrueForge's native per-tool approval gate, distinct from the plan/
+classification approvals above: Persona Fit's enrichment MCP tool calls are
+gated by `require_approval_for_tools`, so a matching call pauses the
+TrueForge turn until a marketer resolves it here.
+
+### `GET /api/tool-approvals`
+Lists pending tool-approval requests. Accepts an optional `?lead_id=` filter.
+
+### `POST /api/tool-approvals/{id}/approve`
+Resumes the paused TrueForge turn with an allow decision and lets Persona
+Fit's real result complete. Always returns `200` with
+`{"resolved": {...}, "followup": null | {...}}` — `followup` is set if the
+resumed turn immediately hit another gated tool call, so the caller can
+distinguish "fully resolved" from "one gate down, another pending" without
+relying on an ambiguous status code. Returns `409` if the request is not
+`pending` (already resolved, or claimed by a concurrent request), and `502`
+if the resume call itself fails transport-wise (the request is released
+back to `pending` for retry in that case).
+
+### `POST /api/tool-approvals/{id}/reject`
+Body: `{"reason": "..."}` (optional). Resumes the paused turn with a deny
+decision and marks the backing `agent_runs` row `failed`. Same response
+shape, `409`, and `502`-with-retry semantics as approve.
+
 ## Dashboard
 
 ### `GET /api/dashboard/stats`
@@ -117,11 +157,16 @@ Runs the Prioritization/Ranking Agent over every currently-classified
 (non-superseded) lead and persists a new `PipelineRanking` snapshot. Each
 returned entry bakes in the lead's name/company/title and its stage/
 confidence *as of this run* — a later reclassification does not change what
-an already-generated ranking reports. Fails with an error if more than 60
+an already-generated ranking reports. Fails with an error if more than 150
 leads are currently classified (a single ranking call is not batched). A
 marketer or another system calls this whenever they want an up-to-date
 "who to contact first" order — typically after running the main pipeline
 for a batch of leads.
+
+The response includes a `subagent_delegation` field: real evidence, read
+back from TrueForge's own session events, of how many per-lead subagent
+delegations actually ran for this ranking (`status`: `delegated` / `partial`
+/ `evidence_unavailable` / `not_delegated`), not just the model's self-report.
 
 ### `GET /api/ranking/latest`
 Returns the most recently generated `PipelineRanking` snapshot, or `null`

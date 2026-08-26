@@ -20,7 +20,7 @@ src/
                      owned in this codebase, not an installed package.
     layout/          AppShell: navigation and page frame.
     leads/           Domain-specific presentational components
-                     (StageBadge, ConfidenceMeter).
+                     (StageBadge, ConfidenceMeter, AgentRunFollowupPanel).
   pages/            One file per application screen: Dashboard, Lead
                     Pipeline, Lead Detail, Data Sources, Setup.
   lib/utils.ts      cn() class-merge helper.

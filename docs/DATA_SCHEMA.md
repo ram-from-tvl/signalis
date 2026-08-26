@@ -123,6 +123,34 @@ a page reload.
 | answer | text | the model's free-text answer, from a turn run on the same TrueForge session as the original run |
 | created_at | datetime | |
 
+### tool_approval_requests
+
+TrueForge's native per-tool approval gate (`require_approval_for_tools`),
+distinct from `approval_events` below. Persists a paused TrueForge turn so a
+marketer can review and resolve it through the UI instead of the turn
+hanging until an out-of-band API call resumes it.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | string (uuid hex) | primary key |
+| lead_id | FK -> leads.id, nullable | |
+| agent_run_id | FK -> agent_runs.id, nullable | the paused run this request belongs to |
+| trueforge_agent_name | string | |
+| session_id | string | |
+| turn_id | string | |
+| thread_id | string | |
+| tool_call_id | string | |
+| tool_name | string | e.g. `classify_company_industry` |
+| tool_input | JSON | the tool call's arguments, shown to the marketer verbatim |
+| status | string | `pending` / `claimed` / `approved` / `rejected` |
+| created_at | datetime | |
+| resolved_at | datetime, nullable | |
+
+`claimed` is a short-lived transitional state: the approve/reject endpoint
+atomically claims a `pending` row (a conditional `UPDATE ... WHERE status =
+'pending'`) before making any TrueForge call, so two concurrent decisions on
+the same request can't both proceed.
+
 ### stage_classifications
 
 Full history of buying-stage decisions for a lead. Never mutated after
@@ -214,6 +242,8 @@ personas            solutions
           ------+------
           |            |
        signals    agent_runs
+          |            |----> agent_run_followups
+          |            |----> tool_approval_requests
           |            |
           +--> stage_classifications --> outreach_plans
                        |                       |

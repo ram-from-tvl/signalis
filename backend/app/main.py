@@ -20,19 +20,10 @@ logger = logging.getLogger("signalis.startup")
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-    # This project has no Alembic/versioned migration setup (see
-    # docs/DECISIONS.md): every model's table is created opportunistically
-    # here via create_all(), which only ever adds tables/columns that don't
-    # exist yet and never alters or drops existing ones — safe to run on
-    # every boot, including against an already-initialized production
-    # database. That additive-only property is also its limit: it has no way
-    # to express a genuine schema change (renaming/dropping a column,
-    # altering a type, backfilling data), so a future change that needs one
-    # of those will require introducing a real migration tool at that point.
-    #
-    # Logging which tables create_all() is about to add gives that startup
-    # step a reviewable trail in ops logs, which is the main thing a fully
-    # unversioned schema story is missing today.
+    # No Alembic/versioned migrations: create_all() only ever adds
+    # tables/columns that don't exist, safe on every boot. Logging which
+    # tables it's about to add gives this unversioned setup a reviewable
+    # startup trail.
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
     new_tables = [name for name in Base.metadata.tables if name not in existing_tables]

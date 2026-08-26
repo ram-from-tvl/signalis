@@ -1,15 +1,9 @@
 """Minimal, additive-only schema patcher for the no-Alembic setup.
 
-This project has no migration framework (see docs/DATA_SCHEMA.md): the
-schema is created via `Base.metadata.create_all`, which is sufficient for
-brand-new tables but does nothing for a column added to a table that
-already exists in a previously-created `signalis.db` — SQLAlchemy never
-alters existing tables. Every schema change so far has been an entirely new
-table, which `create_all` already handles for free; adding
-`agent_runs.trueforge_session_id` to an existing table is the first change
-that needs an actual `ALTER TABLE`, so this module exists to do that one
-kind of change (add a nullable column if missing) idempotently, without
-pulling in Alembic for a single-column patch.
+`Base.metadata.create_all` handles brand-new tables but never alters an
+existing one, so a column added to an already-existing table needs an
+explicit ALTER TABLE. This module does that one kind of change (add a
+nullable column if missing) idempotently.
 """
 from __future__ import annotations
 
@@ -31,19 +25,12 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
 
 def run_startup_migrations(engine: Engine) -> None:
     """Add any missing nullable columns listed in _ADDITIVE_COLUMNS.
+    Idempotent no-op if they already exist.
 
-    Safe to call on every startup: it inspects current columns first and
-    only issues ALTER TABLE for ones that are actually missing, so it is a
-    no-op on a database that already has them (including a brand-new one,
-    where create_all already created the column as part of the table).
-
-    The inspect-then-ALTER sequence is not atomic, so if two backend
-    processes start concurrently against the same database, both can see
-    the column as absent and both attempt the ALTER TABLE — the loser gets
-    a duplicate-column error from SQLite. Since the desired end-state
-    (column exists) is still achieved by whichever process won the race,
-    that specific error is caught and treated as success rather than
-    allowed to crash startup.
+    The inspect-then-ALTER sequence isn't atomic: if two backend processes
+    start concurrently, both can see a column as absent and both attempt
+    the ALTER, and the loser gets a duplicate-column error. Caught and
+    treated as success, since the desired end-state is reached either way.
     """
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())

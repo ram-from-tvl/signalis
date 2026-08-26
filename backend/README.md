@@ -13,17 +13,26 @@ app/
   agents/        The five pipeline agents (signal_extraction, persona_fit,
                  buying_stage, outreach_planner, explainability) plus the
                  standalone prioritization agent, wired together in
-                 graph.py. common.py holds shared agent-run tracking.
+                 graph.py. common.py holds shared agent-run tracking and
+                 the TrueForge integration points (run_agent_reasoning,
+                 resume_agent_reasoning, run_agent_reasoning_with_delegations).
+    skills/      TrueForge skill content (e.g. outreach copywriting), git-
+                 registered with TrueForge and attached by name to an agent.
   api/
-    routes/      One FastAPI router module per resource.
+    routes/      One FastAPI router module per resource, including
+                 tool_approvals.py (TrueForge's native per-tool approval
+                 gate) and agent_followups.py (follow-up Q&A on a run's own
+                 TrueForge session).
     router.py    Aggregates every router; app.main mounts only this one.
     deps.py      Shared dependencies (DB session).
   core/
     config.py    Settings, read from environment/.env.
     llm.py       Direct Gemini/Hugging Face call path (the fallback used
                  when TrueForge itself is unavailable).
-    trueforge.py HTTP client for the TrueForge harness — starts turns,
-                 polls for completion, reads back structured output.
+    trueforge.py HTTP client for the TrueForge harness — starts/resumes/
+                 continues turns, polls for completion, reads back
+                 structured output, fetches session events for subagent
+                 delegation evidence.
     trueforge_bootstrap.py
                  One-time script registering model/sandbox/MCP providers
                  with a running TrueForge instance. Run once after
@@ -34,6 +43,9 @@ app/
     base.py      SQLAlchemy declarative Base.
     session.py   Engine and sessionmaker.
     seed_demo.py Loads the bundled sample dataset.
+    migrations.py
+                 Additive-only ALTER TABLE patcher run at startup, for
+                 columns added to an already-existing table (no Alembic).
   mcp_tools/
     enrichment_server.py
                  Remote MCP server exposing firmographic enrichment tools,
