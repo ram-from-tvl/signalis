@@ -16,7 +16,10 @@ actually runs on.
 flowchart TD
     Start([Pipeline triggered for a lead]) --> SE["Signal Extraction Agent\n(TrueForge session)"]
     SE --> PF["Persona Fit Agent\n(TrueForge session + MCP tools)"]
-    PF -->|"MCP tool calls"| MCP[["signalis-enrichment MCP server\nclassify_company_industry\nestimate_company_size_band"]]
+    PF -->|"MCP tool calls\n(gated by require_approval_for_tools)"| Gate{Tool call approved?}
+    Gate -->|"pending: turn paused"| ToolApproval[(Persist ToolApprovalRequest\nMarketer reviews in UI)]
+    ToolApproval -->|approve: resume turn| MCP[["signalis-enrichment MCP server\nclassify_company_industry\nestimate_company_size_band"]]
+    ToolApproval -->|reject: resume w/ deny| PFFailed[AgentRun marked failed]
     MCP --> PF
     PF --> BS["Buying Stage Orchestrator Agent\n(TrueForge session)"]
     BS -->|"scoring computation"| SB[["Daytona sandbox\nrecency/strength-weighted score"]]
@@ -42,6 +45,14 @@ to a Hugging Face model, if TrueForge is not running or a turn fails — see
 Prioritization/Ranking Agent (bottom of the diagram) runs independently of
 the per-lead pipeline above it — it is triggered separately and reads across
 all leads at once rather than being a node in the per-lead graph.
+
+The tool-approval gate on Persona Fit's MCP calls only fires when the model
+actually decides to call `classify_company_industry` or
+`estimate_company_size_band` (typically when the lead's industry or company
+size is missing or worth verifying) — most pipeline runs for a lead with
+complete firmographic data never reach the `Gate` node at all, since the
+agent has no reason to call either tool. See "Human-approval checkpoint"
+below for the full pause/approve/reject mechanics.
 
 ## Node responsibilities and handoffs
 
@@ -137,11 +148,35 @@ a native per-tool human-approval primitive: an MCP server attached to an
 agent can set `require_approval_for_tools`, and any matching tool call then
 pauses the turn with `state.status == "done"` and
 `required_actions: [{"type": "tool.approval_required", ...}]` until a
-`user.tool_approval` turn input resumes it. This build does not gate the
-enrichment tool behind it — see `docs/DECISIONS.md` for why — but the
-primitive was exercised directly against the running harness to confirm it
-genuinely pauses and resumes a turn, not just that the field exists in the
-API schema.
+`user.tool_approval` turn input resumes it. **This is now wired into the
+product** for the Persona Fit agent's two enrichment tools
+(`classify_company_industry`, `estimate_company_size_band`) — see
+`docs/DECISIONS.md` for the full rationale and the earlier "exercised but not
+wired in" decision this supersedes.
+
+When Persona Fit's TrueForge turn pauses on this gate,
+`app.agents.common.run_agent_reasoning` raises `AgentPausedForToolApproval`
+instead of returning a result; `app.services.pipeline.run_pipeline_for_lead`
+catches it, persists one `ToolApprovalRequest` row per pending tool call, and
+raises `PipelinePausedForApproval` so the pipeline-run endpoint reports a
+clear "paused awaiting tool approval" error for that lead instead of a bare
+failure. A marketer reviews the pending request inline on the Lead Detail
+page (tool name and input shown verbatim) and approves or rejects it via
+`POST /api/tool-approvals/{id}/approve` or `/reject`. Approving resumes the
+same TrueForge turn with `previous_turn_id: "auto"` and a `user.tool_approval`
+resume input, lets Persona Fit's real result complete, and persists it via
+the normal `finish_run` path; rejecting resumes with `approval: {status:
+"deny"}` and marks the backing `AgentRun` as failed rather than leaving it
+stuck in `"running"`.
+
+**Scope tradeoff:** approving a pending tool call completes only the Persona
+Fit step of the graph — it does not automatically resume the rest of the
+pipeline (Buying Stage → Outreach Planner → Explainability). The marketer
+clicks the existing "Regenerate Plan" button to run the remaining steps with
+the now-unblocked Persona Fit result already on record. Full mid-pipeline
+resumption would require checkpointing and replaying partial LangGraph state
+across an HTTP round trip, which is materially heavier than this feature's
+scope justifies; this was a deliberate, documented choice, not an oversight.
 
 ## Re-running the graph
 
