@@ -167,5 +167,14 @@ def run_prioritization(db: Session, leads_with_classifications: list[tuple[Lead,
     result["ranking"] = _normalize_ranking(raw_ranking, leads_with_classifications)
     result["agent_run_id"] = run.id
 
+    # trueforge_session_id is persisted here like every other agent, but note
+    # that the follow-up Q&A endpoint (app/api/routes/agent_followups.py) is
+    # scoped under /api/leads/{lead_id}/agent-runs/{agent_run_id} and this
+    # run's lead_id is always None (it's a pipeline-wide run, not
+    # lead-scoped) — so this session is currently unreachable through any
+    # existing endpoint. That's an intentional, documented scope limitation
+    # for this PR rather than an oversight; see docs/DECISIONS.md. The
+    # session id is still saved so a future prioritization-scoped follow-up
+    # path can use it without a backfill.
     finish_run(db, run, output=result, reasoning=result.get("summary", ""), trueforge_session_id=session_id)
     return result

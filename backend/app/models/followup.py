@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 
 
 class AgentRunFollowup(Base):
+    # Shape (id, agent_run_id, question, answer, created_at) is hand-mirrored
+    # in two other places with no shared contract or codegen — keep in sync
+    # with app/schemas/agent_run.py::AgentRunFollowupOut and
+    # frontend/src/types/api.ts::AgentRunFollowup. See docs/DECISIONS.md for
+    # why this is hand-duplicated rather than generated.
     __tablename__ = "agent_run_followups"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=new_uuid)

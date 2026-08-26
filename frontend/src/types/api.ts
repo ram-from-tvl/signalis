@@ -117,6 +117,10 @@ export interface AgentRun {
   can_ask_followup: boolean
 }
 
+// Shape is hand-mirrored in two other places with no shared contract or
+// codegen — keep in sync with backend/app/models/followup.py::AgentRunFollowup
+// and backend/app/schemas/agent_run.py::AgentRunFollowupOut. See
+// docs/DECISIONS.md for why this is hand-duplicated rather than generated.
 export interface AgentRunFollowup {
   id: string
   agent_run_id: string
