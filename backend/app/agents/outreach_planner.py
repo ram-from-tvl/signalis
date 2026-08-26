@@ -74,6 +74,17 @@ def _ensure_style_guide_skill() -> list[dict] | None:
     degrades to "no skill attached this call" instead of failing the whole
     outreach-planning step — `run_agent_reasoning` already has its own
     TrueForge-unreachable fallback for the reasoning call itself.
+
+    IMPORTANT: `None` here must be read by callers as "skill unavailable
+    *this call*", never as "no skill wanted, ever". `run_outreach_planner`
+    below reacts to a `None` return by injecting `CONDENSED_STYLE_GUIDANCE`
+    directly into the TrueForge instruction for that call (so the run still
+    gets real copywriting guidance instead of running fully unguided), and
+    `ensure_agent` treats a `skills=None` argument as "caller has no opinion
+    this call" — it preserves whatever skills a previously-successful call
+    already attached to the agent's manifest rather than overwriting them
+    with a skill-less one. See `app.core.trueforge.ensure_agent`/
+    `_update_agent` docstrings for the update-path mechanics.
     """
     if not get_settings().trueforge_enabled:
         return None
@@ -155,11 +166,31 @@ def run_outreach_planner(
 
     skills = _ensure_style_guide_skill()
 
+    # If the skill failed to register this call, the TrueForge path would
+    # otherwise run with neither the full skill (not attached) nor the
+    # condensed guidance (that string is only injected on the *direct LLM*
+    # fallback path below) — i.e. no copywriting craft guidance at all,
+    # while still being persisted as an indistinguishable "completed" run.
+    # Fold the same condensed guidance already used on the direct-fallback
+    # path into the TrueForge instruction too, so a skill-registration
+    # hiccup degrades to "condensed guidance instead of the full skill"
+    # rather than "no guidance at all". This mirrors the app's existing
+    # policy of never silently degrading a run without at least recording
+    # real, guided reasoning (see the identical precedent for
+    # `fallback_style_guidance` on the direct-LLM path just below).
+    trueforge_instruction = SYSTEM_INSTRUCTION
+    if skills is None:
+        logger.warning(
+            "Outreach copywriting skill unavailable this call; injecting condensed "
+            "style guidance into the TrueForge instruction instead of running unguided."
+        )
+        trueforge_instruction = f"{SYSTEM_INSTRUCTION}\n\n{CONDENSED_STYLE_GUIDANCE}"
+
     try:
         result = run_agent_reasoning(
             trueforge_agent_name="signalis-outreach-planner",
             model=get_settings().trueforge_model,
-            system_instruction=SYSTEM_INSTRUCTION,
+            system_instruction=trueforge_instruction,
             prompt=prompt,
             response_schema=schema,
             temperature=0.4,

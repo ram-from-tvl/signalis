@@ -148,6 +148,45 @@ def test_outreach_planner_skips_skill_registration_when_trueforge_disabled(db_se
     assert reasoning_kwargs["fallback_style_guidance"]
 
 
+def test_outreach_planner_injects_condensed_guidance_when_skill_registration_fails(db_session, sample_lead):
+    """Regression test for Finding 2 (Qodo, PR #11): if TrueForge is enabled
+    but the skill fails to register this call (e.g. a transient TrueForge
+    error), the TrueForge-path call must NOT silently proceed with neither
+    the full skill nor the condensed fallback guidance — that would produce
+    an outreach plan with no copywriting craft guidance at all, persisted
+    as an indistinguishable "completed" run. The condensed guidance (the
+    same string already used on the direct-LLM fallback path) must be
+    folded into the TrueForge system_instruction for that call instead."""
+    persona = Persona(role="VP Sales", seniority="VP", industry="SaaS", company_size_band="51-200", geography="US")
+    solution = Solution(name="Test Solution", problem_solved="Testing things", channels=["email"])
+    mocked_response = {
+        "touchpoints": [
+            {"day_offset": 0, "channel": "email", "content_theme": "intro", "message_copy": "Hi"}
+        ],
+        "channels": ["email"],
+        "summary": "A short plan.",
+    }
+
+    with patch("app.agents.outreach_planner.get_settings") as mock_settings, \
+         patch("app.agents.outreach_planner.ensure_skill", side_effect=RuntimeError("TrueForge 500")), \
+         patch("app.agents.outreach_planner.run_agent_reasoning", return_value=mocked_response) as mock_reasoning:
+        mock_settings.return_value.trueforge_enabled = True
+        mock_settings.return_value.trueforge_model = "google-gemini/gemini-2-5-flash"
+        run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution)
+
+    _, reasoning_kwargs = mock_reasoning.call_args
+    # skills must be None (caller has no opinion this call), not [] (which
+    # would mean "explicitly no skills" and could clobber a previously
+    # attached skill on ensure_agent's update path).
+    assert reasoning_kwargs["skills"] is None
+    # But the instruction actually sent to run_agent_reasoning — which is
+    # what ensure_agent wraps into the TrueForge agent's manifest
+    # instructions — must still carry real copywriting guidance.
+    from app.agents.skills.outreach_copywriting_style_guide import CONDENSED_STYLE_GUIDANCE
+
+    assert CONDENSED_STYLE_GUIDANCE in reasoning_kwargs["system_instruction"]
+
+
 def test_condensed_style_guidance_covers_core_craft_points():
     """Sanity check that the fallback path's condensed guidance is a real
     summary of the skill's content, not an empty placeholder — covers the

@@ -132,11 +132,29 @@ def test_signal_scoring_falls_back_to_local_when_sandbox_unavailable():
 
 
 def test_ensure_agent_treats_already_exists_conflict_as_success():
-    fake_response = MagicMock()
-    fake_response.status_code = 409
-    fake_response.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
-    with patch("httpx.post", return_value=fake_response):
+    fake_post_response = MagicMock()
+    fake_post_response.status_code = 409
+    fake_post_response.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
+
+    fake_get_response = MagicMock()
+    fake_get_response.raise_for_status = MagicMock()
+    fake_get_response.json.return_value = {
+        "data": [{"id": "agent-123", "name": "signalis-persona-fit", "manifest": {}}]
+    }
+
+    fake_put_response = MagicMock()
+    fake_put_response.raise_for_status = MagicMock()
+
+    with patch("httpx.post", return_value=fake_post_response), \
+         patch("httpx.get", return_value=fake_get_response), \
+         patch("httpx.put", return_value=fake_put_response) as mock_put:
         ensure_agent("signalis-persona-fit", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+    # The already-exists path must PUT-update the manifest (not silently
+    # no-op), since config like this PR's skills attachment has to take
+    # effect on an agent that was already registered by an earlier run.
+    mock_put.assert_called_once()
+    assert mock_put.call_args.args[0] == "http://localhost:8790/api/v1/agents/agent-123"
 
 
 def test_ensure_agent_raises_on_genuine_error():
@@ -214,6 +232,156 @@ def test_ensure_skill_posts_git_backed_manifest():
     assert manifest["path"] == "backend/app/agents/skills/outreach_copywriting_style_guide"
     assert manifest["ref"] == "main"
     assert manifest["description"] == "craft guidance"
+
+
+def test_ensure_agent_updates_manifest_with_skills_when_agent_already_exists():
+    """Regression test for Finding 1 (Qodo, PR #11): an agent that was
+    already registered by an earlier run (e.g. this repo's own local
+    TrueForge instance, which already has signalis-outreach-planner
+    registered *without* skills from prior testing) must actually receive
+    this PR's skills attachment and sandbox.enabled=true change on the next
+    ensure_agent call — not silently keep running with its old, pre-skill
+    manifest because the create-time POST 409'd and was previously treated
+    as unconditional success."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-outreach-planner"}}'
+
+    # The pre-existing agent, as it would be found on a TrueForge instance
+    # that registered it before this PR's skill attachment landed: no
+    # `skills` key, sandbox disabled.
+    list_response = MagicMock()
+    list_response.raise_for_status = MagicMock()
+    list_response.json.return_value = {
+        "data": [
+            {
+                "id": "agent-outreach-1",
+                "name": "signalis-outreach-planner",
+                "manifest": {
+                    "model": {"name": "google-gemini/gemini-2-5-flash"},
+                    "instructions": "old pre-skill instructions",
+                    "config": {"sandbox": {"enabled": False}},
+                },
+            }
+        ]
+    }
+
+    put_response = MagicMock()
+    put_response.raise_for_status = MagicMock()
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=list_response) as mock_get, \
+         patch("httpx.put", return_value=put_response) as mock_put:
+        ensure_agent(
+            "signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            instructions="new instructions mentioning the skill",
+            skills=[{"name": "outreach-copywriting-style-guide"}],
+        )
+
+    mock_get.assert_called_once()
+    mock_put.assert_called_once()
+    put_url, put_kwargs = mock_put.call_args
+    assert put_url[0] == "http://localhost:8790/api/v1/agents/agent-outreach-1"
+    put_manifest = put_kwargs["json"]["manifest"]
+    # The whole point of the fix: the PUT payload must actually carry the
+    # skills list and enabled sandbox this time, not the old skill-less
+    # manifest shape.
+    assert put_manifest["skills"] == [{"name": "outreach-copywriting-style-guide"}]
+    assert put_manifest["config"]["sandbox"]["enabled"] is True
+    assert put_manifest["instructions"] == "new instructions mentioning the skill"
+
+
+def test_ensure_agent_preserves_existing_skills_when_caller_has_no_opinion():
+    """Regression test for the related risk Qodo flagged: if a later call's
+    skill registration fails (skills=None passed to ensure_agent, not an
+    explicit skills=[]), updating an already-skill-attached agent must NOT
+    clobber its existing skills/sandbox config with a skill-less manifest —
+    otherwise a single transient registration hiccup would permanently
+    regress a previously-working, skill-attached agent."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-outreach-planner"}}'
+
+    # This agent already has the skill attached from a prior, successful call.
+    list_response = MagicMock()
+    list_response.raise_for_status = MagicMock()
+    list_response.json.return_value = {
+        "data": [
+            {
+                "id": "agent-outreach-1",
+                "name": "signalis-outreach-planner",
+                "manifest": {
+                    "model": {"name": "google-gemini/gemini-2-5-flash"},
+                    "instructions": "old instructions",
+                    "config": {"sandbox": {"enabled": True}},
+                    "skills": [{"name": "outreach-copywriting-style-guide"}],
+                },
+            }
+        ]
+    }
+
+    put_response = MagicMock()
+    put_response.raise_for_status = MagicMock()
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=list_response), \
+         patch("httpx.put", return_value=put_response) as mock_put:
+        # skills=None: this call's skill registration failed upstream, so
+        # the caller has no opinion — it must not imply "remove skills".
+        ensure_agent(
+            "signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            instructions="new instructions, skill registration failed this time",
+            skills=None,
+        )
+
+    put_manifest = mock_put.call_args.kwargs["json"]["manifest"]
+    assert put_manifest["skills"] == [{"name": "outreach-copywriting-style-guide"}]
+    assert put_manifest["config"]["sandbox"]["enabled"] is True
+
+
+def test_ensure_agent_explicit_empty_skills_clears_existing_skills():
+    """Contrast case: an explicit skills=[] (caller genuinely wants no
+    skills) must still be honored on update, distinguishing it from the
+    skills=None 'no opinion, preserve existing' case above."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-outreach-planner"}}'
+
+    list_response = MagicMock()
+    list_response.raise_for_status = MagicMock()
+    list_response.json.return_value = {
+        "data": [
+            {
+                "id": "agent-outreach-1",
+                "name": "signalis-outreach-planner",
+                "manifest": {
+                    "model": {"name": "google-gemini/gemini-2-5-flash"},
+                    "instructions": "old instructions",
+                    "config": {"sandbox": {"enabled": True}},
+                    "skills": [{"name": "outreach-copywriting-style-guide"}],
+                },
+            }
+        ]
+    }
+
+    put_response = MagicMock()
+    put_response.raise_for_status = MagicMock()
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=list_response), \
+         patch("httpx.put", return_value=put_response) as mock_put:
+        ensure_agent(
+            "signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            instructions="explicitly no skills",
+            skills=[],
+        )
+
+    put_manifest = mock_put.call_args.kwargs["json"]["manifest"]
+    assert "skills" not in put_manifest
+    assert put_manifest["config"]["sandbox"]["enabled"] is False
 
 
 def test_ensure_agent_attaches_skills_and_enables_sandbox():
