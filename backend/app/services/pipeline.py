@@ -134,6 +134,7 @@ def run_pipeline_for_lead(db: Session, lead: Lead) -> dict[str, Any]:
         confidence=stage_result["confidence"],
         justification=stage_result["justification"],
         persona_fit_result=final_state["persona_fit_result"],
+        based_on_agent_run_id=final_state.get("persona_fit_agent_run_id"),
         requires_approval=requires_approval,
         approval_status=approval_status,
     )
