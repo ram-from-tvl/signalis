@@ -17,6 +17,7 @@ import logging
 
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import OperationalError
 
 logger = logging.getLogger("signalis.db.migrations")
 
@@ -35,6 +36,14 @@ def run_startup_migrations(engine: Engine) -> None:
     only issues ALTER TABLE for ones that are actually missing, so it is a
     no-op on a database that already has them (including a brand-new one,
     where create_all already created the column as part of the table).
+
+    The inspect-then-ALTER sequence is not atomic, so if two backend
+    processes start concurrently against the same database, both can see
+    the column as absent and both attempt the ALTER TABLE — the loser gets
+    a duplicate-column error from SQLite. Since the desired end-state
+    (column exists) is still achieved by whichever process won the race,
+    that specific error is caught and treated as success rather than
+    allowed to crash startup.
     """
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
@@ -49,4 +58,11 @@ def run_startup_migrations(engine: Engine) -> None:
             if column in existing_columns:
                 continue
             logger.info("Adding missing column %s.%s", table, column)
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"))
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {sql_type}"))
+            except OperationalError as exc:
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+                logger.info(
+                    "Column %s.%s was added by a concurrent process; continuing.", table, column
+                )
