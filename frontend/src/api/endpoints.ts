@@ -1,6 +1,7 @@
 import { apiClient } from "./client"
 import type {
   AgentRun,
+  AgentRunFollowup,
   DashboardStats,
   IngestionReport,
   LeadDetail,
@@ -59,6 +60,17 @@ export const leadsApi = {
   appendSignals: (id: string, signals: Record<string, unknown>[]) =>
     apiClient
       .post<IngestionReport>(`/api/leads/${id}/signals`, { signals })
+      .then((r) => r.data),
+}
+
+export const agentFollowupsApi = {
+  list: (leadId: string, agentRunId: string) =>
+    apiClient
+      .get<AgentRunFollowup[]>(`/api/leads/${leadId}/agent-runs/${agentRunId}/followups`)
+      .then((r) => r.data),
+  ask: (leadId: string, agentRunId: string, question: string) =>
+    apiClient
+      .post<AgentRunFollowup>(`/api/leads/${leadId}/agent-runs/${agentRunId}/ask`, { question })
       .then((r) => r.data),
 }
 

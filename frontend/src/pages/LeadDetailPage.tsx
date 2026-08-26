@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
+import { AgentRunFollowupPanel } from "@/components/leads/AgentRunFollowupPanel"
 import { useToast } from "@/components/ui/toast-context"
 import { ArrowLeft, Sparkles, TrendingUp, CheckCircle2, XCircle, Clock, Bot } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
@@ -424,6 +425,14 @@ export function LeadDetailPage() {
                     <CardContent className="pt-0">
                       <p className="text-xs text-muted-foreground mb-2">{run.input_summary}</p>
                       <p className="text-sm leading-relaxed">{run.reasoning}</p>
+                      {run.can_ask_followup ? (
+                        <AgentRunFollowupPanel leadId={leadId!} agentRunId={run.id} />
+                      ) : (
+                        <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
+                          Follow-up questions aren't available for this run (it used the direct-Gemini
+                          fallback path, which has no TrueForge session to continue).
+                        </p>
+                      )}
                     </CardContent>
                   </Card>
                 </motion.div>
