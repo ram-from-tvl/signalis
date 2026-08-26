@@ -7,9 +7,19 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.routes import approvals, dashboard, leads, personas, pipeline, ranking, solutions, uploads
+from app.api.routes import (
+    agent_followups,
+    approvals,
+    dashboard,
+    leads,
+    personas,
+    pipeline,
+    ranking,
+    solutions,
+    uploads,
+)
 
 api_router = APIRouter()
 
-for module in (personas, solutions, uploads, leads, pipeline, approvals, dashboard, ranking):
+for module in (personas, solutions, uploads, leads, pipeline, approvals, dashboard, ranking, agent_followups):
     api_router.include_router(module.router)
