@@ -43,8 +43,9 @@ def _run_test(db_session, sample_lead):
         icp_filters={"company_size_band": "51-200", "industries": ["SaaS"]},
     )
 
-    result = run_persona_fit(db_session, sample_lead, persona, solution)
+    result, agent_run_id = run_persona_fit(db_session, sample_lead, persona, solution)
 
+    assert agent_run_id is not None
     assert result["fit"] in {"full_fit", "partial_fit", "mismatch"}
     assert isinstance(result["reasoning"], str)
     assert len(result["reasoning"]) > 10

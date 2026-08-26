@@ -22,6 +22,7 @@ flowchart LR
     subgraph Runtime["Agent runtime"]
         TF[TrueForge harness<br/>local process]
         MCP[Enrichment MCP server]
+        RESEARCH[Research MCP server<br/>Tavily web search]
         SANDBOX[Daytona sandbox]
     end
 
@@ -38,6 +39,7 @@ flowchart LR
     TF --> GEMINI
     TF -.fallback.-> HF
     TF --> MCP
+    TF --> RESEARCH
     GRAPH -->|signal scoring| SANDBOX
 ```
 
@@ -57,9 +59,13 @@ flowchart LR
    than calling an LLM SDK directly. See
    [AGENT_GRAPH.md](AGENT_GRAPH.md) for the full node-by-node breakdown and
    the one real conditional edge (the confidence-threshold branch).
-4. The Persona Fit node's reasoning is grounded by a genuine tool call
-   through TrueForge's MCP layer to a remote enrichment server
-   (`app/mcp_tools/enrichment_server.py`), not an in-process function call.
+4. The Persona Fit node's reasoning is grounded by genuine tool calls through
+   TrueForge's MCP layer to two remote servers: an enrichment server
+   (`app/mcp_tools/enrichment_server.py`) for firmographic classification,
+   and a research server (`app/mcp_tools/research_server.py`) that calls the
+   live Tavily search API for recent company news, funding, and hiring
+   signals — neither is an in-process function call embedded in the agent's
+   own code.
 5. The Buying Stage node's signal-strength score is computed by running
    generated Python inside a Daytona sandbox (`app/core/sandbox.py`), with
    an equivalent local fallback if the sandbox is briefly unreachable.
