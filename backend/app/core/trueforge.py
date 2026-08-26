@@ -8,6 +8,7 @@ locally (see README) before agents can execute.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
@@ -72,7 +73,7 @@ def _start_turn(session_id: str, message: str, *, label: str) -> str:
         )
         turn_resp.raise_for_status()
         return turn_resp.json()["data"]["id"]
-    except (httpx.HTTPError, KeyError) as exc:
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError) as exc:
         raise TrueForgeError(f"Failed to start TrueForge turn for {label}: {exc}") from exc
 
 
@@ -91,24 +92,28 @@ def _poll_turn_to_completion(session_id: str, turn_id: str, *, label: str) -> st
             poll = httpx.get(f"{_base_url()}/api/v1/sessions/{session_id}/turns/{turn_id}", timeout=15.0)
             poll.raise_for_status()
             state = poll.json()["data"]["state"]
-        except (httpx.HTTPError, KeyError) as exc:
-            raise TrueForgeError(f"Failed to poll TrueForge turn for {label}: {exc}") from exc
+            if not isinstance(state, dict):
+                raise TypeError(f"expected turn state to be an object, got {type(state).__name__}")
 
-        status = state.get("status")
-        if status == "done":
-            output = state.get("output")
-            if output is None:
+            status = state.get("status")
+            if status == "done":
+                output = state.get("output")
+                if output is None:
+                    raise TrueForgeError(
+                        f"TrueForge turn for {label} finished with no output "
+                        f"(required_actions={state.get('required_actions')})"
+                    )
+                if not isinstance(output, dict):
+                    raise TypeError(f"expected turn output to be an object, got {type(output).__name__}")
+                return output.get("content", "")
+            if status == "error":
+                raise TrueForgeError(f"TrueForge turn for {label} failed: {state.get('message')}")
+            if status == "requires_action":
                 raise TrueForgeError(
-                    f"TrueForge turn for {label} finished with no output "
-                    f"(required_actions={state.get('required_actions')})"
+                    f"TrueForge turn for {label} requires an approval this client does not handle"
                 )
-            return output.get("content", "")
-        if status == "error":
-            raise TrueForgeError(f"TrueForge turn for {label} failed: {state.get('message')}")
-        if status == "requires_action":
-            raise TrueForgeError(
-                f"TrueForge turn for {label} requires an approval this client does not handle"
-            )
+        except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError) as exc:
+            raise TrueForgeError(f"Failed to poll TrueForge turn for {label}: {exc}") from exc
         time.sleep(_TURN_POLL_INTERVAL_SECONDS)
 
     raise TrueForgeError(f"TrueForge turn for {label} timed out after {_TURN_POLL_TIMEOUT_SECONDS}s")
@@ -135,7 +140,7 @@ def run_turn(agent_name: str, message: str) -> tuple[dict[str, Any], str]:
         )
         session_resp.raise_for_status()
         session_id = session_resp.json()["data"]["id"]
-    except (httpx.HTTPError, KeyError) as exc:
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError) as exc:
         raise TrueForgeError(f"Failed to create TrueForge session for {agent_name}: {exc}") from exc
 
     turn_id = _start_turn(session_id, message, label=agent_name)

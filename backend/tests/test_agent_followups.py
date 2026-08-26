@@ -3,10 +3,14 @@ TrueForge session as a real conversation turn, plus the trueforge.py
 functions and run_agent_reasoning return-shape it depends on."""
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
-from app.core.trueforge import TrueForgeError, run_followup_turn
-from app.models import AgentRun
+import pytest
+from sqlalchemy import select
+
+from app.core.trueforge import TrueForgeError, run_followup_turn, run_turn
+from app.models import AgentRun, AgentRunFollowup
 
 
 def _make_agent_run(db_session, lead, *, trueforge_session_id: str | None) -> AgentRun:
@@ -117,6 +121,80 @@ def test_agent_run_out_reports_can_ask_followup(client, db_session, sample_lead)
     assert can_ask_flags == {True, False}
 
 
+def _count_followups(db_session, agent_run_id: str) -> int:
+    return len(
+        db_session.execute(
+            select(AgentRunFollowup).where(AgentRunFollowup.agent_run_id == agent_run_id)
+        ).scalars().all()
+    )
+
+
+def test_ask_followup_missing_answer_key_returns_502_and_no_db_row(client, db_session, sample_lead):
+    run = _make_agent_run(db_session, sample_lead, trueforge_session_id="session-abc")
+    with patch(
+        "app.api.routes.agent_followups.run_followup_turn",
+        return_value={"not_answer": "oops"},
+    ):
+        response = client.post(
+            f"/api/leads/{sample_lead.id}/agent-runs/{run.id}/ask",
+            json={"question": "Why?"},
+        )
+    assert response.status_code == 502
+    assert _count_followups(db_session, run.id) == 0
+
+
+def test_ask_followup_blank_answer_returns_502_and_no_db_row(client, db_session, sample_lead):
+    run = _make_agent_run(db_session, sample_lead, trueforge_session_id="session-abc")
+    with patch(
+        "app.api.routes.agent_followups.run_followup_turn",
+        return_value={"answer": "   "},
+    ):
+        response = client.post(
+            f"/api/leads/{sample_lead.id}/agent-runs/{run.id}/ask",
+            json={"question": "Why?"},
+        )
+    assert response.status_code == 502
+    assert _count_followups(db_session, run.id) == 0
+
+
+def test_ask_followup_non_string_answer_returns_502_and_no_db_row(client, db_session, sample_lead):
+    run = _make_agent_run(db_session, sample_lead, trueforge_session_id="session-abc")
+    with patch(
+        "app.api.routes.agent_followups.run_followup_turn",
+        return_value={"answer": ["not", "a", "string"]},
+    ):
+        response = client.post(
+            f"/api/leads/{sample_lead.id}/agent-runs/{run.id}/ask",
+            json={"question": "Why?"},
+        )
+    assert response.status_code == 502
+    assert _count_followups(db_session, run.id) == 0
+
+
+def test_ask_followup_non_dict_result_returns_502_and_no_db_row(client, db_session, sample_lead):
+    run = _make_agent_run(db_session, sample_lead, trueforge_session_id="session-abc")
+    with patch(
+        "app.api.routes.agent_followups.run_followup_turn",
+        return_value=["totally", "wrong", "shape"],
+    ):
+        response = client.post(
+            f"/api/leads/{sample_lead.id}/agent-runs/{run.id}/ask",
+            json={"question": "Why?"},
+        )
+    assert response.status_code == 502
+    assert _count_followups(db_session, run.id) == 0
+
+
+def test_ask_followup_rejects_question_over_max_length(client, db_session, sample_lead):
+    run = _make_agent_run(db_session, sample_lead, trueforge_session_id="session-abc")
+    response = client.post(
+        f"/api/leads/{sample_lead.id}/agent-runs/{run.id}/ask",
+        json={"question": "x" * 2001},
+    )
+    assert response.status_code == 422
+    assert _count_followups(db_session, run.id) == 0
+
+
 def test_run_followup_turn_uses_existing_session_without_creating_a_new_one():
     """This is the core behavior this feature depends on: run_followup_turn
     must post directly to the existing session's turns endpoint and never
@@ -142,3 +220,81 @@ def test_run_followup_turn_uses_existing_session_without_creating_a_new_one():
     assert mock_post.call_count == 1
     called_url = mock_post.call_args[0][0]
     assert called_url.endswith("/api/v1/sessions/existing-session-id/turns")
+
+
+def test_run_followup_turn_wraps_malformed_json_from_start_turn_as_trueforge_error():
+    """A 200-status response whose body isn't valid JSON must surface as
+    TrueForgeError (-> the route's 502), not an uncaught JSONDecodeError
+    (-> a raw 500)."""
+    with patch("app.core.trueforge.httpx.post") as mock_post:
+        turn_response = mock_post.return_value
+        turn_response.raise_for_status = lambda: None
+        turn_response.json.side_effect = json.JSONDecodeError("bad json", "doc", 0)
+
+        with pytest.raises(TrueForgeError):
+            run_followup_turn("existing-session-id", "question")
+
+
+def test_run_followup_turn_wraps_malformed_json_from_poll_as_trueforge_error():
+    with patch("app.core.trueforge.httpx.post") as mock_post, patch(
+        "app.core.trueforge.httpx.get"
+    ) as mock_get:
+        turn_response = mock_post.return_value
+        turn_response.raise_for_status = lambda: None
+        turn_response.json.return_value = {"data": {"id": "turn-1"}}
+
+        poll_response = mock_get.return_value
+        poll_response.raise_for_status = lambda: None
+        poll_response.json.side_effect = json.JSONDecodeError("bad json", "doc", 0)
+
+        with pytest.raises(TrueForgeError):
+            run_followup_turn("existing-session-id", "question")
+
+
+def test_run_followup_turn_wraps_non_dict_turn_state_as_trueforge_error():
+    """If the poll response's `state` isn't an object (e.g. TrueForge
+    returned a malformed-but-200 body), accessing .get on it must not raise
+    a raw AttributeError."""
+    with patch("app.core.trueforge.httpx.post") as mock_post, patch(
+        "app.core.trueforge.httpx.get"
+    ) as mock_get:
+        turn_response = mock_post.return_value
+        turn_response.raise_for_status = lambda: None
+        turn_response.json.return_value = {"data": {"id": "turn-1"}}
+
+        poll_response = mock_get.return_value
+        poll_response.raise_for_status = lambda: None
+        poll_response.json.return_value = {"data": {"state": "not-an-object"}}
+
+        with pytest.raises(TrueForgeError):
+            run_followup_turn("existing-session-id", "question")
+
+
+def test_run_followup_turn_wraps_non_dict_output_as_trueforge_error():
+    with patch("app.core.trueforge.httpx.post") as mock_post, patch(
+        "app.core.trueforge.httpx.get"
+    ) as mock_get:
+        turn_response = mock_post.return_value
+        turn_response.raise_for_status = lambda: None
+        turn_response.json.return_value = {"data": {"id": "turn-1"}}
+
+        poll_response = mock_get.return_value
+        poll_response.raise_for_status = lambda: None
+        poll_response.json.return_value = {
+            "data": {"state": {"status": "done", "output": "not-an-object"}}
+        }
+
+        with pytest.raises(TrueForgeError):
+            run_followup_turn("existing-session-id", "question")
+
+
+def test_run_turn_wraps_malformed_json_from_session_creation_as_trueforge_error():
+    """Same class of bug, pre-existing code path (run_turn's session
+    creation, not just the newer run_followup_turn)."""
+    with patch("app.core.trueforge.httpx.post") as mock_post:
+        session_response = mock_post.return_value
+        session_response.raise_for_status = lambda: None
+        session_response.json.side_effect = json.JSONDecodeError("bad json", "doc", 0)
+
+        with pytest.raises(TrueForgeError):
+            run_turn("some-agent", "prompt")

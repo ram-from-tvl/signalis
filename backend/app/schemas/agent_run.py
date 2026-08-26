@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class AgentRunOut(BaseModel):
@@ -41,10 +41,28 @@ class AgentRunOut(BaseModel):
 
 
 class AgentRunFollowupCreate(BaseModel):
-    question: str
+    # Forwarded verbatim into a synchronous, paid LLM turn that can hold an
+    # API worker for up to the TrueForge turn polling timeout (90s, see
+    # app/core/trueforge.py) — an unbounded question string lets a single
+    # request both balloon cost and tie up a worker for the max duration.
+    # 2000 chars is generous for a genuine follow-up question (comfortably
+    # multiple paragraphs) while still rejecting pasted-document-sized abuse
+    # at the validation layer, before ever reaching TrueForge.
+    question: str = Field(..., min_length=1, max_length=2000)
+
+    @field_validator("question")
+    @classmethod
+    def _reject_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Question must not be empty")
+        return value
 
 
 class AgentRunFollowupOut(BaseModel):
+    # Shape is hand-mirrored in two other places with no shared contract or
+    # codegen — keep in sync with app/models/followup.py::AgentRunFollowup
+    # and frontend/src/types/api.ts::AgentRunFollowup. See docs/DECISIONS.md
+    # for why this is hand-duplicated rather than generated.
     model_config = ConfigDict(from_attributes=True)
     id: str
     agent_run_id: str

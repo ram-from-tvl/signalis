@@ -29,6 +29,13 @@ _FOLLOWUP_RESPONSE_SCHEMA = {
 
 
 def _get_agent_run(db: Session, lead_id: str, agent_run_id: str) -> AgentRun:
+    # This route is lead-scoped by design (see the module docstring/router
+    # prefix), so a pipeline-wide run with lead_id=None (currently only
+    # produced by the prioritization agent) can never match here and is
+    # unreachable through this endpoint even though it may have a
+    # trueforge_session_id persisted on it. That is an intentional,
+    # documented scope limitation for this PR rather than an oversight —
+    # see docs/DECISIONS.md for the reasoning.
     run = db.get(AgentRun, agent_run_id)
     if not run or run.lead_id != lead_id:
         raise HTTPException(404, "Agent run not found for this lead")
@@ -71,7 +78,31 @@ def ask_followup(
     except LLMError as exc:  # pragma: no cover - run_followup_turn never falls back, defensive only
         raise HTTPException(502, f"Follow-up turn failed: {exc}") from exc
 
-    answer = result.get("answer", "").strip() or "The model did not return an answer."
+    # `_extract_json_object` is annotated to return dict[str, Any] but does
+    # not itself validate that shape — it is only a best-effort JSON parse,
+    # so the result here is untrusted until checked. A response with a
+    # missing/blank answer, or an `answer` key present but of the wrong
+    # type (e.g. the model returned an array or number instead of a
+    # string), must never be silently turned into a canned placeholder and
+    # persisted as if it were a genuine successful exchange — that would
+    # make a real dependency failure indistinguishable from a real answer
+    # in the audit history. Treat any of these as the same class of
+    # TrueForge dependency failure as a transport/HTTP error: a 502, and no
+    # DB row.
+    if not isinstance(result, dict):
+        raise HTTPException(
+            502, f"Follow-up turn failed: TrueForge returned an unexpected response shape: {result!r}"
+        )
+    raw_answer = result.get("answer")
+    if not isinstance(raw_answer, str):
+        raise HTTPException(
+            502,
+            "Follow-up turn failed: TrueForge did not return a string 'answer' "
+            f"(got {type(raw_answer).__name__ if raw_answer is not None else 'missing'}).",
+        )
+    answer = raw_answer.strip()
+    if not answer:
+        raise HTTPException(502, "Follow-up turn failed: TrueForge returned a blank answer.")
 
     followup = AgentRunFollowup(agent_run_id=run.id, question=question, answer=answer)
     db.add(followup)
