@@ -21,6 +21,7 @@ from app.core.trueforge import (
     _extract_subagent_delegations,
     _get_session_events,
     ensure_agent,
+    ensure_skill,
     resume_turn,
     run_turn,
 )
@@ -149,23 +150,26 @@ def test_ensure_agent_treats_already_exists_conflict_as_success():
     fake_post_response.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
 
     fake_get_response = MagicMock()
+    fake_get_response.raise_for_status = MagicMock()
     fake_get_response.json.return_value = {
-        "data": [{"id": "agent-123", "name": "signalis-persona-fit"}]
+        "data": [{"id": "agent-123", "name": "signalis-persona-fit", "manifest": {}}]
     }
 
     fake_put_response = MagicMock()
+    fake_put_response.raise_for_status = MagicMock()
 
     with patch("httpx.post", return_value=fake_post_response), \
-        patch("httpx.get", return_value=fake_get_response), \
-        patch("httpx.put", return_value=fake_put_response) as mock_put:
+         patch("httpx.get", return_value=fake_get_response), \
+         patch("httpx.put", return_value=fake_put_response) as mock_put:
         ensure_agent("signalis-persona-fit", model="google-gemini/gemini-2-5-flash", instructions="x")
 
     # The already-exists path must PUT-update the manifest (not silently
-    # no-op), since config like require_approval_for_tools or a newly
-    # attached MCP server has to take effect on an agent that was already
-    # registered by an earlier run.
+    # no-op), since config like require_approval_for_tools, a newly attached
+    # MCP server, or this PR's skills attachment has to take effect on an
+    # agent that was already registered by an earlier run.
     mock_put.assert_called_once()
     assert mock_put.call_args.args[0] == "http://localhost:8790/api/v1/agents/agent-123"
+
 
 def test_ensure_agent_raises_on_genuine_error():
     fake_response = MagicMock()
@@ -177,6 +181,300 @@ def test_ensure_agent_raises_on_genuine_error():
     with patch("httpx.post", return_value=fake_response):
         with pytest.raises(TrueForgeError):
             ensure_agent("some-agent", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+
+def test_ensure_skill_treats_already_exists_conflict_as_success():
+    fake_response = MagicMock()
+    fake_response.status_code = 409
+    fake_response.text = '{"error":{"message":"Skill name already exists: outreach-copywriting-style-guide"}}'
+    with patch("httpx.post", return_value=fake_response):
+        ensure_skill(
+            "outreach-copywriting-style-guide",
+            repo_url="https://github.com/ram-from-tvl/signalis",
+            path="backend/app/agents/skills/outreach_copywriting_style_guide",
+            ref="main",
+            description="test",
+        )
+
+
+def test_ensure_skill_raises_on_genuine_error():
+    fake_response = MagicMock()
+    fake_response.status_code = 500
+    fake_response.text = '{"error":{"message":"internal error"}}'
+    fake_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "server error", request=MagicMock(), response=fake_response
+    )
+    with patch("httpx.post", return_value=fake_response):
+        with pytest.raises(TrueForgeError):
+            ensure_skill(
+                "some-skill",
+                repo_url="https://github.com/ram-from-tvl/signalis",
+                path="some/path",
+                ref="main",
+                description="test",
+            )
+
+
+def test_ensure_skill_posts_git_backed_manifest():
+    """Regression test locking in the real TrueForge skill contract, verified
+    against the live harness's OpenAPI schema: a skill is a `type: git`
+    manifest with a GitHub/GitLab URL, path, ref, and description — never
+    raw content posted inline."""
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured["url"] = url
+        captured["json"] = json
+        resp = MagicMock()
+        resp.status_code = 201
+        return resp
+
+    with patch("httpx.post", side_effect=fake_post):
+        ensure_skill(
+            "outreach-copywriting-style-guide",
+            repo_url="https://github.com/ram-from-tvl/signalis",
+            path="backend/app/agents/skills/outreach_copywriting_style_guide",
+            ref="main",
+            description="craft guidance",
+        )
+
+    assert captured["url"].endswith("/api/v1/settings/skills")
+    manifest = captured["json"]["manifest"]
+    assert manifest["type"] == "git"
+    assert manifest["name"] == "outreach-copywriting-style-guide"
+    assert manifest["url"] == "https://github.com/ram-from-tvl/signalis"
+    assert manifest["path"] == "backend/app/agents/skills/outreach_copywriting_style_guide"
+    assert manifest["ref"] == "main"
+    assert manifest["description"] == "craft guidance"
+
+
+def test_ensure_agent_updates_manifest_with_skills_when_agent_already_exists():
+    """Regression test for Finding 1 (Qodo, PR #11): an agent that was
+    already registered by an earlier run (e.g. this repo's own local
+    TrueForge instance, which already has signalis-outreach-planner
+    registered *without* skills from prior testing) must actually receive
+    this PR's skills attachment and sandbox.enabled=true change on the next
+    ensure_agent call — not silently keep running with its old, pre-skill
+    manifest because the create-time POST 409'd and was previously treated
+    as unconditional success."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-outreach-planner"}}'
+
+    # The pre-existing agent, as it would be found on a TrueForge instance
+    # that registered it before this PR's skill attachment landed: no
+    # `skills` key, sandbox disabled.
+    list_response = MagicMock()
+    list_response.raise_for_status = MagicMock()
+    list_response.json.return_value = {
+        "data": [
+            {
+                "id": "agent-outreach-1",
+                "name": "signalis-outreach-planner",
+                "manifest": {
+                    "model": {"name": "google-gemini/gemini-2-5-flash"},
+                    "instructions": "old pre-skill instructions",
+                    "config": {"sandbox": {"enabled": False}},
+                },
+            }
+        ]
+    }
+
+    put_response = MagicMock()
+    put_response.raise_for_status = MagicMock()
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=list_response) as mock_get, \
+         patch("httpx.put", return_value=put_response) as mock_put:
+        ensure_agent(
+            "signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            instructions="new instructions mentioning the skill",
+            skills=[{"name": "outreach-copywriting-style-guide"}],
+        )
+
+    mock_get.assert_called_once()
+    mock_put.assert_called_once()
+    put_url, put_kwargs = mock_put.call_args
+    assert put_url[0] == "http://localhost:8790/api/v1/agents/agent-outreach-1"
+    put_manifest = put_kwargs["json"]["manifest"]
+    # The whole point of the fix: the PUT payload must actually carry the
+    # skills list and enabled sandbox this time, not the old skill-less
+    # manifest shape.
+    assert put_manifest["skills"] == [{"name": "outreach-copywriting-style-guide"}]
+    assert put_manifest["config"]["sandbox"]["enabled"] is True
+    assert put_manifest["instructions"] == "new instructions mentioning the skill"
+
+
+def test_ensure_agent_preserves_existing_skills_when_caller_has_no_opinion():
+    """Regression test for the related risk Qodo flagged: if a later call's
+    skill registration fails (skills=None passed to ensure_agent, not an
+    explicit skills=[]), updating an already-skill-attached agent must NOT
+    clobber its existing skills/sandbox config with a skill-less manifest —
+    otherwise a single transient registration hiccup would permanently
+    regress a previously-working, skill-attached agent."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-outreach-planner"}}'
+
+    # This agent already has the skill attached from a prior, successful call.
+    list_response = MagicMock()
+    list_response.raise_for_status = MagicMock()
+    list_response.json.return_value = {
+        "data": [
+            {
+                "id": "agent-outreach-1",
+                "name": "signalis-outreach-planner",
+                "manifest": {
+                    "model": {"name": "google-gemini/gemini-2-5-flash"},
+                    "instructions": "old instructions",
+                    "config": {"sandbox": {"enabled": True}},
+                    "skills": [{"name": "outreach-copywriting-style-guide"}],
+                },
+            }
+        ]
+    }
+
+    put_response = MagicMock()
+    put_response.raise_for_status = MagicMock()
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=list_response), \
+         patch("httpx.put", return_value=put_response) as mock_put:
+        # skills=None: this call's skill registration failed upstream, so
+        # the caller has no opinion — it must not imply "remove skills".
+        ensure_agent(
+            "signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            instructions="new instructions, skill registration failed this time",
+            skills=None,
+        )
+
+    put_manifest = mock_put.call_args.kwargs["json"]["manifest"]
+    assert put_manifest["skills"] == [{"name": "outreach-copywriting-style-guide"}]
+    assert put_manifest["config"]["sandbox"]["enabled"] is True
+
+
+def test_ensure_agent_explicit_empty_skills_clears_existing_skills():
+    """Contrast case: an explicit skills=[] (caller genuinely wants no
+    skills) must still be honored on update, distinguishing it from the
+    skills=None 'no opinion, preserve existing' case above."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-outreach-planner"}}'
+
+    list_response = MagicMock()
+    list_response.raise_for_status = MagicMock()
+    list_response.json.return_value = {
+        "data": [
+            {
+                "id": "agent-outreach-1",
+                "name": "signalis-outreach-planner",
+                "manifest": {
+                    "model": {"name": "google-gemini/gemini-2-5-flash"},
+                    "instructions": "old instructions",
+                    "config": {"sandbox": {"enabled": True}},
+                    "skills": [{"name": "outreach-copywriting-style-guide"}],
+                },
+            }
+        ]
+    }
+
+    put_response = MagicMock()
+    put_response.raise_for_status = MagicMock()
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=list_response), \
+         patch("httpx.put", return_value=put_response) as mock_put:
+        ensure_agent(
+            "signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            instructions="explicitly no skills",
+            skills=[],
+        )
+
+    put_manifest = mock_put.call_args.kwargs["json"]["manifest"]
+    assert "skills" not in put_manifest
+    assert put_manifest["config"]["sandbox"]["enabled"] is False
+
+
+def test_ensure_agent_wraps_malformed_list_response_as_trueforge_error():
+    """Regression test for Finding 3 (Qodo, 2nd pass, PR #11): a malformed
+    but 2xx response body from the list-agents endpoint that `_update_agent`
+    calls on a 409 (e.g. an HTML error page or truncated body served with a
+    200 status by a misbehaving proxy/dependency) must still surface as
+    `TrueForgeError`, not a raw `json.JSONDecodeError` — otherwise
+    `run_agent_reasoning`'s `except TrueForgeError` never triggers, the
+    direct-LLM fallback never runs, and the whole outreach-planning call
+    blows up instead of degrading gracefully."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-outreach-planner"}}'
+
+    malformed_list_response = MagicMock()
+    malformed_list_response.raise_for_status = MagicMock()
+    malformed_list_response.json.side_effect = json.JSONDecodeError("bad json", "<html>error</html>", 0)
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=malformed_list_response):
+        with pytest.raises(TrueForgeError):
+            ensure_agent(
+                "signalis-outreach-planner",
+                model="google-gemini/gemini-2-5-flash",
+                instructions="new instructions",
+                skills=[{"name": "outreach-copywriting-style-guide"}],
+            )
+
+
+def test_ensure_agent_wraps_unexpected_list_shape_as_trueforge_error():
+    """Companion to the malformed-JSON case above: a 2xx response that parses
+    as JSON but has an unexpected `data` shape (e.g. a dict instead of a
+    list of agent records) must also surface as `TrueForgeError` rather than
+    a raw `TypeError` from iterating/indexing it, so it is still caught by
+    `run_agent_reasoning`'s fallback handling."""
+    create_conflict = MagicMock()
+    create_conflict.status_code = 409
+    create_conflict.text = '{"error":{"message":"Agent name already exists: signalis-outreach-planner"}}'
+
+    bad_shape_response = MagicMock()
+    bad_shape_response.raise_for_status = MagicMock()
+    bad_shape_response.json.return_value = {"data": {"unexpected": "shape"}}
+
+    with patch("httpx.post", return_value=create_conflict), \
+         patch("httpx.get", return_value=bad_shape_response):
+        with pytest.raises(TrueForgeError):
+            ensure_agent(
+                "signalis-outreach-planner",
+                model="google-gemini/gemini-2-5-flash",
+                instructions="new instructions",
+                skills=[{"name": "outreach-copywriting-style-guide"}],
+            )
+
+
+def test_ensure_agent_attaches_skills_and_enables_sandbox():
+    """TrueForge requires config.sandbox.enabled=true to attach skills to an
+    agent (verified against the live harness's manifest schema). ensure_agent
+    must flip that on whenever skills are passed, not just pass the list
+    through and leave sandbox disabled."""
+    captured = {}
+
+    def fake_post(url, json, timeout):
+        captured["json"] = json
+        resp = MagicMock()
+        resp.status_code = 201
+        return resp
+
+    with patch("httpx.post", side_effect=fake_post):
+        ensure_agent(
+            "signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            instructions="x",
+            skills=[{"name": "outreach-copywriting-style-guide"}],
+        )
+
+    manifest = captured["json"]["manifest"]
+    assert manifest["skills"] == [{"name": "outreach-copywriting-style-guide"}]
+    assert manifest["config"]["sandbox"]["enabled"] is True
 
 
 def test_run_agent_reasoning_uses_trueforge_when_available():
@@ -773,3 +1071,86 @@ def test_run_turn_returns_delegations_when_events_fetch_succeeds():
 
     assert output == {"ranking": [], "summary": "ok"}
     assert delegations == []
+def test_run_agent_reasoning_passes_skills_to_ensure_agent():
+    """The TrueForge path must actually forward `skills` through to
+    ensure_agent so the manifest genuinely includes the attachment, not just
+    accept the parameter and drop it."""
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent") as mock_ensure, \
+         patch("app.agents.common.run_turn", return_value={"stage": "late", "confidence": 0.9}):
+        mock_settings.return_value.trueforge_enabled = True
+        run_agent_reasoning(
+            trueforge_agent_name="signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction="plan outreach",
+            prompt="lead data",
+            response_schema=SCHEMA,
+            skills=[{"name": "outreach-copywriting-style-guide"}],
+        )
+    _, kwargs = mock_ensure.call_args
+    assert kwargs["skills"] == [{"name": "outreach-copywriting-style-guide"}]
+
+
+def test_run_agent_reasoning_injects_fallback_style_guidance_when_trueforge_unavailable():
+    """Regression test for the fallback-path style-guidance precedent: skills
+    only exist inside TrueForge's agent loop, so when the direct Gemini/HF
+    fallback path is used instead, any craft guidance that now lives only in
+    a skill must be injected into the fallback's system instruction directly
+    (mirroring the existing tool-stripping precedent), or the fallback path's
+    output quality regresses relative to the TrueForge+skill path."""
+    captured = {}
+
+    def fake_generate_json(*, system_instruction, prompt, response_schema, temperature):
+        captured["system_instruction"] = system_instruction
+        return {"touchpoints": [], "channels": [], "summary": "ok"}
+
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
+         patch("app.agents.common.generate_json", side_effect=fake_generate_json):
+        mock_settings.return_value.trueforge_enabled = True
+        run_agent_reasoning(
+            trueforge_agent_name="signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction="Plan outreach touchpoints for this lead.",
+            prompt="lead data",
+            response_schema=SCHEMA,
+            skills=[{"name": "outreach-copywriting-style-guide"}],
+            fallback_style_guidance="CONDENSED GUIDANCE: avoid generic AI-sounding copy.",
+        )
+    assert "CONDENSED GUIDANCE" in captured["system_instruction"]
+
+
+def test_run_agent_reasoning_does_not_duplicate_style_guidance_already_in_system_instruction():
+    """Regression test for Finding 2 (Qodo, 2nd pass, PR #11): when a caller
+    (e.g. `run_outreach_planner`, on a skill-registration failure) has
+    already folded the condensed style guidance into `system_instruction`
+    itself — so the TrueForge-bound instruction carries it — and also passes
+    the same text as `fallback_style_guidance`, the direct-LLM fallback path
+    must not append it a second time. Before the fix, `fallback_instruction`
+    started as `system_instruction` (already containing the guidance once)
+    and then unconditionally appended `fallback_style_guidance` (the same
+    text again), so every direct-fallback call in that situation sent the
+    model two copies of the same guidance block."""
+    captured = {}
+
+    def fake_generate_json(*, system_instruction, prompt, response_schema, temperature):
+        captured["system_instruction"] = system_instruction
+        return {"touchpoints": [], "channels": [], "summary": "ok"}
+
+    guidance = "CONDENSED GUIDANCE: avoid generic AI-sounding copy."
+    system_instruction_with_guidance = f"Plan outreach touchpoints for this lead.\n\n{guidance}"
+
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent", side_effect=TrueForgeError("unreachable")), \
+         patch("app.agents.common.generate_json", side_effect=fake_generate_json):
+        mock_settings.return_value.trueforge_enabled = True
+        run_agent_reasoning(
+            trueforge_agent_name="signalis-outreach-planner",
+            model="google-gemini/gemini-2-5-flash",
+            system_instruction=system_instruction_with_guidance,
+            prompt="lead data",
+            response_schema=SCHEMA,
+            skills=None,
+            fallback_style_guidance=guidance,
+        )
+    assert captured["system_instruction"].count(guidance) == 1
