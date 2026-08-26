@@ -132,11 +132,27 @@ def test_signal_scoring_falls_back_to_local_when_sandbox_unavailable():
 
 
 def test_ensure_agent_treats_already_exists_conflict_as_success():
-    fake_response = MagicMock()
-    fake_response.status_code = 409
-    fake_response.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
-    with patch("httpx.post", return_value=fake_response):
+    fake_post_response = MagicMock()
+    fake_post_response.status_code = 409
+    fake_post_response.text = '{"error":{"message":"Agent name already exists: signalis-persona-fit"}}'
+
+    fake_get_response = MagicMock()
+    fake_get_response.json.return_value = {
+        "data": [{"id": "agent-123", "name": "signalis-persona-fit"}]
+    }
+
+    fake_put_response = MagicMock()
+
+    with patch("httpx.post", return_value=fake_post_response), \
+        patch("httpx.get", return_value=fake_get_response), \
+        patch("httpx.put", return_value=fake_put_response) as mock_put:
         ensure_agent("signalis-persona-fit", model="google-gemini/gemini-2-5-flash", instructions="x")
+
+    # The already-exists path must PUT-update the manifest (not silently
+    # no-op), since config like require_approval_for_tools has to take
+    # effect on an agent that was already registered by an earlier run.
+    mock_put.assert_called_once()
+    assert mock_put.call_args.args[0] == "http://localhost:8790/api/v1/agents/agent-123"
 
 
 def test_ensure_agent_raises_on_genuine_error():
