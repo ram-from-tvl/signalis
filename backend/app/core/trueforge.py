@@ -30,6 +30,19 @@ class TrueForgeError(RuntimeError):
     """Raised when the TrueForge harness is unreachable or a turn fails."""
 
 
+class TrueForgeTurnExecutedError(TrueForgeError):
+    """A TrueForge turn genuinely ran — the model responded, and any MCP
+    tools/subagent delegations it decided to call already executed — but its
+    final output couldn't be resolved into a usable answer (malformed/non-
+    JSON content, or an unsupported required-action type). Distinct from a
+    pre-execution TrueForgeError (agent registration failed, the session/
+    turn couldn't even be created, or the poll transport itself failed)
+    specifically so a caller retrying on a different model/provider knows
+    NOT to retry here: the turn's side effects (a Hunter email lookup, an
+    Exa search, a subagent fan-out) already happened once, and starting a
+    fresh turn on another model would just repeat them."""
+
+
 @dataclass
 class PendingToolApproval:
     """One tool call TrueForge paused a turn on, awaiting a human decision.
@@ -290,23 +303,30 @@ def _resolve_turn_result(
                 return pending
             # A required_actions entry TrueForge didn't tag as tool.approval_required
             # (e.g. mcp.auth_required, tool.response_required) — this client only
-            # knows how to resume tool-approval pauses.
-            raise TrueForgeError(
+            # knows how to resume tool-approval pauses. The turn genuinely ran to
+            # get here (model reasoning + any tool calls before the pause).
+            raise TrueForgeTurnExecutedError(
                 f"TrueForge turn for {agent_name} paused on an unsupported required action: {required_actions}"
             )
 
         output = state.get("output")
         if output is None:
-            raise TrueForgeError(f"TrueForge turn for {agent_name} finished with no output and no required actions")
+            raise TrueForgeTurnExecutedError(
+                f"TrueForge turn for {agent_name} finished with no output and no required actions"
+            )
         content = output.get("content", "")
         parsed = _extract_json_object(content)
         if parsed is None:
-            raise TrueForgeError(f"TrueForge agent {agent_name} returned non-JSON output: {content!r}")
+            raise TrueForgeTurnExecutedError(f"TrueForge agent {agent_name} returned non-JSON output: {content!r}")
         return parsed
     except TrueForgeError:
         raise
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
-        raise TrueForgeError(f"TrueForge turn for {agent_name} returned a malformed response: {exc}") from exc
+        # The turn reached "done" (ran to completion) before this shape error,
+        # so this is also a post-execution failure, not a pre-execution one.
+        raise TrueForgeTurnExecutedError(
+            f"TrueForge turn for {agent_name} returned a malformed response: {exc}"
+        ) from exc
 
 
 def _get_session_events(session_id: str) -> list[dict[str, Any]]:

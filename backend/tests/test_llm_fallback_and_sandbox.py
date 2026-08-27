@@ -1,4 +1,4 @@
-"""Tests for the Gemini-to-Hugging-Face fallback and Daytona sandbox scoring,
+"""Tests for the Hugging-Face-to-Gemini fallback and Daytona sandbox scoring,
 with each external transport mocked at its own boundary."""
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from app.core.sandbox import run_signal_scoring
 from app.core.trueforge import (
     PendingToolApproval,
     TrueForgeError,
+    TrueForgeTurnExecutedError,
     _extract_subagent_delegations,
     _get_session_events,
     ensure_agent,
@@ -33,32 +34,146 @@ SCHEMA = {
 }
 
 
-def test_generate_json_uses_gemini_when_it_succeeds():
-    with patch("app.core.llm._call_gemini_json", return_value={"stage": "mid", "confidence": 0.8}) as gemini, \
-         patch("app.core.llm._call_hf_fallback_json") as hf:
+def test_generate_json_uses_hf_when_it_succeeds():
+    with patch("app.core.llm._call_hf_json", return_value={"stage": "mid", "confidence": 0.8}) as hf, \
+         patch("app.core.llm._call_gemini_json") as gemini:
         result = generate_json(system_instruction="x", prompt="y", response_schema=SCHEMA)
     assert result == {"stage": "mid", "confidence": 0.8}
-    gemini.assert_called_once()
-    hf.assert_not_called()
+    hf.assert_called_once()
+    gemini.assert_not_called()
 
 
-def test_generate_json_falls_back_to_hf_when_gemini_fails():
-    with patch("app.core.llm._call_gemini_json", side_effect=LLMError("quota exceeded")), \
-         patch("app.core.llm._call_hf_fallback_json", return_value={"stage": "late", "confidence": 0.6}) as hf:
+def test_generate_json_falls_back_to_gemini_when_hf_fails():
+    with patch("app.core.llm._call_hf_json", side_effect=LLMError("hf unavailable")), \
+         patch("app.core.llm._call_gemini_json", return_value={"stage": "late", "confidence": 0.6}) as gemini:
         result = generate_json(system_instruction="x", prompt="y", response_schema=SCHEMA)
     assert result == {"stage": "late", "confidence": 0.6}
-    hf.assert_called_once()
+    gemini.assert_called_once()
 
 
 def test_generate_json_raises_when_both_providers_fail():
-    with patch("app.core.llm._call_gemini_json", side_effect=LLMError("gemini down")), \
-         patch("app.core.llm._call_hf_fallback_json", side_effect=LLMError("hf down")):
+    with patch("app.core.llm._call_hf_json", side_effect=LLMError("hf down")), \
+         patch("app.core.llm._call_gemini_json", side_effect=LLMError("gemini down")):
         with pytest.raises(LLMError, match="All LLM providers failed"):
             generate_json(system_instruction="x", prompt="y", response_schema=SCHEMA)
 
 
-def test_hf_fallback_parses_tool_call_arguments():
-    from app.core.llm import _call_hf_fallback_json
+def test_call_hf_json_rotates_to_next_token_on_quota_error():
+    """Regression test: a 402/429/401/403 from one configured HF token must
+    move on to the next configured token rather than failing the whole call
+    — this is what lets multiple HF_TOKEN/HF_TOKEN_1/HF_TOKEN_2 keys actually
+    provide redundancy instead of just being read and ignored."""
+    from app.core.llm import _call_hf_json
+
+    call_count = {"n": 0}
+
+    def fake_call_with_token(token, *args, **kwargs):
+        call_count["n"] += 1
+        if token == "token-1":
+            raise LLMError("Hugging Face call failed: 402 Payment Required")
+        return {"stage": "late", "confidence": 0.7}
+
+    with patch("app.core.llm.get_settings") as mock_settings, \
+         patch("app.core.llm._call_hf_json_with_token", side_effect=fake_call_with_token):
+        mock_settings.return_value.hf_tokens = ["token-1", "token-2"]
+        result = _call_hf_json("x", "y", SCHEMA, 0.3)
+
+    assert result == {"stage": "late", "confidence": 0.7}
+    assert call_count["n"] == 2
+
+
+def test_call_hf_json_does_not_rotate_on_non_quota_error():
+    """A genuine non-quota failure (e.g. a malformed response shape) from
+    the first token must not be masked by silently trying the next token —
+    only 402/429/401/403 warrant rotation, everything else should surface
+    immediately."""
+    from app.core.llm import _call_hf_json
+
+    call_count = {"n": 0}
+
+    def fake_call_with_token(token, *args, **kwargs):
+        call_count["n"] += 1
+        raise LLMError("Hugging Face returned an unexpected response: {}")
+
+    with patch("app.core.llm.get_settings") as mock_settings, \
+         patch("app.core.llm._call_hf_json_with_token", side_effect=fake_call_with_token):
+        mock_settings.return_value.hf_tokens = ["token-1", "token-2"]
+        with pytest.raises(LLMError, match="unexpected response"):
+            _call_hf_json("x", "y", SCHEMA, 0.3)
+
+    assert call_count["n"] == 1
+
+
+def test_call_gemini_json_rotates_to_next_key_on_quota_error():
+    from app.core.llm import _call_gemini_json
+
+    call_count = {"n": 0}
+
+    def fake_call_with_key(key, *args, **kwargs):
+        call_count["n"] += 1
+        if key == "key-1":
+            raise LLMError("Gemini call failed: 429 RESOURCE_EXHAUSTED")
+        return {"stage": "mid", "confidence": 0.5}
+
+    with patch("app.core.llm.get_settings") as mock_settings, \
+         patch("app.core.llm._call_gemini_json_with_key", side_effect=fake_call_with_key):
+        mock_settings.return_value.gemini_api_keys = ["key-1", "key-2"]
+        result = _call_gemini_json("x", "y", SCHEMA, 0.3)
+
+    assert result == {"stage": "mid", "confidence": 0.5}
+    assert call_count["n"] == 2
+
+
+def test_get_client_caches_per_key_not_globally():
+    """Regression test for the Qodo finding: a single process-global client
+    cache would silently keep serving whichever key last built it, so a
+    rotation loop retrying key 1 after key 2 succeeded would actually reuse
+    key 2's client and never really retry key 1. Each distinct key must get
+    its own cached client."""
+    import app.core.llm as llm_module
+
+    llm_module._clients.clear()
+    client_1 = llm_module._get_client("key-1")
+    client_2 = llm_module._get_client("key-2")
+    client_1_again = llm_module._get_client("key-1")
+
+    assert client_1 is not client_2
+    assert client_1 is client_1_again
+
+
+def test_call_gemini_json_uses_correct_client_per_key_after_rotation():
+    """End-to-end regression test for the same finding at the
+    _call_gemini_json_with_key boundary: after rotating past key-1 to
+    key-2, a subsequent call that starts again at key-1 must genuinely
+    invoke the genai.Client for key-1, not silently reuse key-2's client."""
+    import app.core.llm as llm_module
+
+    llm_module._clients.clear()
+    constructed_with = []
+
+    class FakeClient:
+        def __init__(self, api_key):
+            constructed_with.append(api_key)
+            self.api_key = api_key
+
+        class models:
+            @staticmethod
+            def generate_content(**kwargs):
+                raise RuntimeError("not used in this test")
+
+    with patch("app.core.llm.genai.Client", side_effect=FakeClient):
+        client_a = llm_module._get_client("key-1")
+        client_b = llm_module._get_client("key-2")
+        client_a_again = llm_module._get_client("key-1")
+
+    assert constructed_with == ["key-1", "key-2"]  # only one construction per distinct key
+    assert client_a.api_key == "key-1"
+    assert client_b.api_key == "key-2"
+    assert client_a_again is client_a
+
+
+def test_hf_json_parses_tool_call_arguments():
+    from app.core.llm import _call_hf_json
 
     fake_response = MagicMock()
     fake_response.raise_for_status = MagicMock()
@@ -74,37 +189,66 @@ def test_hf_fallback_parses_tool_call_arguments():
         ]
     }
     with patch("app.core.llm.get_settings") as mock_settings, patch("httpx.post", return_value=fake_response):
-        mock_settings.return_value.hf_token = "fake-token"
+        mock_settings.return_value.hf_tokens = ["fake-token"]
         mock_settings.return_value.hf_model = "fake-model"
-        result = _call_hf_fallback_json("x", "y", SCHEMA, 0.3)
+        result = _call_hf_json("x", "y", SCHEMA, 0.3)
     assert result == {"stage": "early", "confidence": 0.3}
 
 
-def test_hf_fallback_raises_llm_error_on_transport_failure():
-    from app.core.llm import _call_hf_fallback_json
+def test_hf_json_parses_text_wrapped_tool_call():
+    """Regression test: some HF-served models emit a text-form
+    <tool_call>{"name": ..., "arguments": {...}}</tool_call> instead of
+    using the tool_calls field, despite tool_choice — this must still be
+    recovered as usable arguments, not rejected as "no usable tool call"."""
+    from app.core.llm import _call_hf_json
+
+    fake_response = MagicMock()
+    fake_response.raise_for_status = MagicMock()
+    fake_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        '<tool_call>\n{"name": "submit_result", "arguments": '
+                        '{"stage": "late", "confidence": 0.7}}\n</tool_call>'
+                    ),
+                    "tool_calls": [],
+                }
+            }
+        ]
+    }
+    with patch("app.core.llm.get_settings") as mock_settings, patch("httpx.post", return_value=fake_response):
+        mock_settings.return_value.hf_tokens = ["fake-token"]
+        mock_settings.return_value.hf_model = "fake-model"
+        result = _call_hf_json("x", "y", SCHEMA, 0.3)
+    assert result == {"stage": "late", "confidence": 0.7}
+
+
+def test_hf_json_raises_llm_error_on_transport_failure():
+    from app.core.llm import _call_hf_json
 
     with patch("app.core.llm.get_settings") as mock_settings, \
          patch("httpx.post", side_effect=httpx.ConnectError("connection refused")):
-        mock_settings.return_value.hf_token = "fake-token"
+        mock_settings.return_value.hf_tokens = ["fake-token"]
         mock_settings.return_value.hf_model = "fake-model"
-        with pytest.raises(LLMError, match="Hugging Face fallback call failed"):
-            _call_hf_fallback_json("x", "y", SCHEMA, 0.3)
+        with pytest.raises(LLMError, match="Hugging Face call failed"):
+            _call_hf_json("x", "y", SCHEMA, 0.3)
 
 
-def test_hf_fallback_wraps_json_decode_error_as_llm_error():
+def test_hf_json_wraps_json_decode_error_as_llm_error():
     """Regression test: a malformed response body (e.g. an HTML error page
     served with a 200 status) must surface as LLMError, not an unhandled
     JSONDecodeError, so generate_json's fallback handling is never bypassed."""
-    from app.core.llm import _call_hf_fallback_json
+    from app.core.llm import _call_hf_json
 
     fake_response = MagicMock()
     fake_response.raise_for_status = MagicMock()
     fake_response.json.side_effect = json.JSONDecodeError("bad json", "doc", 0)
     with patch("app.core.llm.get_settings") as mock_settings, patch("httpx.post", return_value=fake_response):
-        mock_settings.return_value.hf_token = "fake-token"
+        mock_settings.return_value.hf_tokens = ["fake-token"]
         mock_settings.return_value.hf_model = "fake-model"
         with pytest.raises(LLMError, match="non-JSON response body"):
-            _call_hf_fallback_json("x", "y", SCHEMA, 0.3)
+            _call_hf_json("x", "y", SCHEMA, 0.3)
 
 
 def test_sandbox_script_safely_escapes_malicious_signal_content():
@@ -498,6 +642,126 @@ def test_run_agent_reasoning_uses_trueforge_when_available():
     mock_turn.assert_called_once()
 
 
+def test_run_agent_reasoning_does_not_rotate_models_after_turn_executed():
+    """Regression test for the Qodo finding: a TrueForgeTurnExecutedError
+    means the turn genuinely ran (model reasoning + any real MCP tool calls
+    already happened) before failing at output resolution. Retrying on a
+    different model would silently repeat those side effects (e.g. a second
+    Hunter.io lookup), so model rotation must stop immediately and fall
+    through to the direct-LLM path, not try the next configured model."""
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent") as mock_ensure, \
+         patch(
+             "app.agents.common.run_turn",
+             side_effect=TrueForgeTurnExecutedError("turn ran but returned non-JSON output"),
+         ) as mock_turn, \
+         patch("app.agents.common.generate_json", return_value={"stage": "mid", "confidence": 0.4}) as mock_generate:
+        mock_settings.return_value.trueforge_enabled = True
+        mock_settings.return_value.trueforge_models = ["huggingface/qwen3-4b", "huggingface-2/qwen3-4b"]
+        result, session_id = run_agent_reasoning(
+            trueforge_agent_name="signalis-buying-stage-orchestrator",
+            model="huggingface/qwen3-4b",
+            system_instruction="reason about stage",
+            prompt="lead data",
+            response_schema=SCHEMA,
+        )
+
+    assert result == {"stage": "mid", "confidence": 0.4}
+    assert session_id is None
+    # Exactly one attempt — must NOT have rotated to the second configured model.
+    mock_ensure.assert_called_once()
+    mock_turn.assert_called_once()
+    mock_generate.assert_called_once()
+
+
+def test_run_agent_reasoning_does_rotate_models_on_pre_execution_failure():
+    """Contrast case: a plain TrueForgeError (e.g. agent registration or
+    session/turn creation failed — nothing executed yet) is safe to retry
+    on the next configured model, unlike TrueForgeTurnExecutedError above."""
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch(
+             "app.agents.common.ensure_agent",
+             side_effect=[TrueForgeError("registration transport failed"), None],
+         ) as mock_ensure, \
+         patch(
+             "app.agents.common.run_turn",
+             return_value=({"stage": "late", "confidence": 0.9}, "session-xyz"),
+         ) as mock_turn:
+        mock_settings.return_value.trueforge_enabled = True
+        mock_settings.return_value.trueforge_models = ["huggingface/qwen3-4b", "huggingface-2/qwen3-4b"]
+        result, session_id = run_agent_reasoning(
+            trueforge_agent_name="signalis-buying-stage-orchestrator",
+            model="huggingface/qwen3-4b",
+            system_instruction="reason about stage",
+            prompt="lead data",
+            response_schema=SCHEMA,
+        )
+
+    assert result == {"stage": "late", "confidence": 0.9}
+    assert session_id == "session-xyz"
+    assert mock_ensure.call_count == 2
+    mock_turn.assert_called_once()
+
+
+def test_run_agent_reasoning_serializes_ensure_agent_and_run_turn_per_agent_name():
+    """Regression test for the Qodo finding: ensure_agent(model=candidate)
+    followed by run_turn is a two-step sequence against a shared, fixed
+    agent name. Without a per-agent lock, two concurrent calls for the same
+    agent name could interleave their ensure_agent/run_turn pairs, so one
+    request's turn could silently run on the other request's model. This
+    verifies ensure_agent and run_turn for the same agent name are never
+    interleaved with another concurrent call for that same name."""
+    import threading
+    import time
+
+    from app.agents.common import _agent_locks
+
+    _agent_locks.clear()
+    call_log: list[str] = []
+    log_lock = threading.Lock()
+
+    def fake_ensure_agent(name, **kwargs):
+        with log_lock:
+            call_log.append(f"ensure:{kwargs['model']}")
+        time.sleep(0.02)  # widen the window so a real race would be caught
+
+    def fake_run_turn(name, prompt, **kwargs):
+        with log_lock:
+            call_log.append("run_turn")
+        return {"stage": "late", "confidence": 0.9}, "session-1"
+
+    def call_with_model(model):
+        with patch("app.agents.common.get_settings") as mock_settings:
+            mock_settings.return_value.trueforge_enabled = True
+            mock_settings.return_value.trueforge_models = [model]
+            run_agent_reasoning(
+                trueforge_agent_name="signalis-persona-fit",
+                model=model,
+                system_instruction="assess fit",
+                prompt="lead data",
+                response_schema=SCHEMA,
+            )
+
+    with patch("app.agents.common.ensure_agent", side_effect=fake_ensure_agent), \
+         patch("app.agents.common.run_turn", side_effect=fake_run_turn):
+        threads = [
+            threading.Thread(target=call_with_model, args=(f"model-{i}",)) for i in range(5)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    # Every ensure_agent call must be immediately followed by its own
+    # run_turn call — never two ensure_agent calls back-to-back, which
+    # would mean two requests' registrations interleaved before either
+    # ran its turn.
+    assert len(call_log) == 10
+    for i in range(0, 10, 2):
+        assert call_log[i].startswith("ensure:")
+        assert call_log[i + 1] == "run_turn"
+
+
 def test_ensure_agent_updates_manifest_when_agent_already_exists():
     """Regression test for the PUT-update fix: previously ensure_agent
     treated 409-already-exists as a no-op, so config changes (like
@@ -585,7 +849,7 @@ def test_run_agent_reasoning_falls_back_when_update_agent_returns_malformed_json
     with patch("app.agents.common.get_settings") as mock_settings, \
          patch("httpx.post", return_value=create_conflict), \
          patch("httpx.get", return_value=malformed_list_response), \
-         patch("app.core.llm._call_gemini_json", return_value={"stage": "mid", "confidence": 0.5}) as gemini:
+         patch("app.agents.common.generate_json", return_value={"stage": "mid", "confidence": 0.5}) as generate_json_mock:
         mock_settings.return_value.trueforge_enabled = True
         result, session_id = run_agent_reasoning(
             trueforge_agent_name="some-agent",
@@ -596,7 +860,7 @@ def test_run_agent_reasoning_falls_back_when_update_agent_returns_malformed_json
         )
     assert result == {"stage": "mid", "confidence": 0.5}
     assert session_id is None
-    gemini.assert_called_once()
+    generate_json_mock.assert_called_once()
 
 
 def test_poll_turn_wraps_malformed_state_as_trueforge_error():

@@ -1,14 +1,16 @@
 """Single choke point for all agent LLM calls.
 
-Every agent goes through `generate_json` so the model id, API key handling,
-and error behavior live in exactly one place. Agents never construct a
-genai client (or the HF fallback client) of their own.
+Every agent goes through `generate_json`/`generate_text` so the model id,
+API key handling, and error behavior live in exactly one place. Agents never
+construct a genai client (or the HF client) of their own.
 
-Gemini is the primary provider. If Gemini fails after retries (rate limit,
-quota, transport error), the same call is retried once against a Hugging
-Face Inference Providers model using OpenAI-compatible tool calling, so a
-transient Gemini outage does not stop the pipeline from producing real,
-model-generated reasoning.
+Hugging Face Inference Providers is the primary provider (chosen for
+practical reliability over Gemini's restrictive free-tier daily quota). If
+HF fails (missing token, transport error, unparsable response), the same
+call is retried once against Gemini, so a transient HF outage does not stop
+the pipeline from producing real, model-generated reasoning. This priority
+order is a deliberate choice, not a fallback-of-convenience — see
+docs/DECISIONS.md.
 """
 from __future__ import annotations
 
@@ -34,25 +36,39 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     """Best-effort recovery of a JSON object from free-text model output.
 
     Tries the whole string first, then the widest {...} span, since some
-    models wrap JSON in prose or markdown code fences despite instructions.
+    models wrap JSON in prose, markdown code fences, or <tool_call> tags
+    (some HF-served models emit a text-form tool call instead of using the
+    tool_calls field, despite tool_choice) despite instructions.
     """
     text = text.strip()
+    if text.startswith("<tool_call>"):
+        text = text[len("<tool_call>") :]
+        text = text.split("</tool_call>", 1)[0]
+        text = text.strip()
     if text.startswith("```"):
         text = text.strip("`")
         if text.lower().startswith("json"):
             text = text[4:]
         text = text.strip()
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
     except json.JSONDecodeError:
-        pass
+        parsed = None
+    else:
+        # HF's <tool_call> convention wraps the call as {"name": ..., "arguments": {...}}
+        if isinstance(parsed, dict) and "arguments" in parsed and "name" in parsed:
+            return parsed["arguments"]
+        return parsed
 
     start, end = text.find("{"), text.rfind("}")
     if start != -1 and end != -1 and end > start:
         try:
-            return json.loads(text[start : end + 1])
+            parsed = json.loads(text[start : end + 1])
         except json.JSONDecodeError:
             return None
+        if isinstance(parsed, dict) and "arguments" in parsed and "name" in parsed:
+            return parsed["arguments"]
+        return parsed
     return None
 
 
@@ -60,23 +76,25 @@ class LLMError(RuntimeError):
     """Raised when every configured LLM provider fails or returns unparsable output."""
 
 
-_client: genai.Client | None = None
+_clients: dict[str, genai.Client] = {}
 
 
-def _get_client() -> genai.Client:
-    global _client
-    if _client is None:
-        settings = get_settings()
-        if not settings.gemini_api_key:
-            raise LLMError("GEMINI_API_KEY is not configured")
-        _client = genai.Client(api_key=settings.gemini_api_key)
-    return _client
+def _get_client(api_key: str) -> genai.Client:
+    """One cached client per distinct API key, not a single process-global
+    client — a single cache slot would silently keep serving whichever key
+    last built it, so a rotation loop retrying "key 1" after key 2 succeeded
+    would actually reuse key 2's client and never really retry key 1."""
+    client = _clients.get(api_key)
+    if client is None:
+        client = genai.Client(api_key=api_key)
+        _clients[api_key] = client
+    return client
 
 
-def _call_gemini_json(
-    system_instruction: str, prompt: str, response_schema: dict[str, Any], temperature: float
+def _call_gemini_json_with_key(
+    api_key: str, system_instruction: str, prompt: str, response_schema: dict[str, Any], temperature: float
 ) -> dict[str, Any]:
-    client = _get_client()
+    client = _get_client(api_key)
     settings = get_settings()
     response = None
     last_error: Exception | None = None
@@ -116,13 +134,32 @@ def _call_gemini_json(
         raise LLMError(f"Gemini returned non-JSON output: {exc}") from exc
 
 
-def _call_hf_fallback_json(
+def _call_gemini_json(
     system_instruction: str, prompt: str, response_schema: dict[str, Any], temperature: float
 ) -> dict[str, Any]:
+    """Try every configured Gemini API key in order, moving to the next only
+    on a genuine quota/auth failure from the current one."""
     settings = get_settings()
-    if not settings.hf_token:
-        raise LLMError("HF_TOKEN is not configured, no fallback available")
+    keys = settings.gemini_api_keys
+    if not keys:
+        raise LLMError("GEMINI_API_KEY is not configured")
 
+    last_error: LLMError | None = None
+    for key in keys:
+        try:
+            return _call_gemini_json_with_key(key, system_instruction, prompt, response_schema, temperature)
+        except LLMError as exc:
+            last_error = exc
+            quota_or_auth = "RESOURCE_EXHAUSTED" in str(exc) or "PERMISSION_DENIED" in str(exc) or "UNAUTHENTICATED" in str(exc)
+            if not quota_or_auth:
+                raise
+    raise last_error
+
+
+def _call_hf_json_with_token(
+    token: str, system_instruction: str, prompt: str, response_schema: dict[str, Any], temperature: float
+) -> dict[str, Any]:
+    settings = get_settings()
     tool_name = "submit_result"
     # This provider only supports tool_choice "auto"/"none" (not "required"),
     # so the model can technically still answer in free text. The system
@@ -155,21 +192,21 @@ def _call_hf_fallback_json(
     try:
         resp = httpx.post(
             _HF_ROUTER_URL,
-            headers={"Authorization": f"Bearer {settings.hf_token}"},
+            headers={"Authorization": f"Bearer {token}"},
             json=payload,
             timeout=30.0,
         )
         resp.raise_for_status()
         data = resp.json()
     except httpx.HTTPError as exc:
-        raise LLMError(f"Hugging Face fallback call failed: {exc}") from exc
+        raise LLMError(f"Hugging Face call failed: {exc}") from exc
     except json.JSONDecodeError as exc:
-        raise LLMError(f"Hugging Face fallback returned a non-JSON response body: {exc}") from exc
+        raise LLMError(f"Hugging Face returned a non-JSON response body: {exc}") from exc
 
     try:
         message = data["choices"][0]["message"]
     except (KeyError, IndexError) as exc:
-        raise LLMError(f"Hugging Face fallback returned an unexpected response: {data}") from exc
+        raise LLMError(f"Hugging Face returned an unexpected response: {data}") from exc
 
     tool_calls = message.get("tool_calls") or []
     if tool_calls:
@@ -179,13 +216,91 @@ def _call_hf_fallback_json(
         # recover a JSON object from the content rather than failing outright.
         arguments = _extract_json_object(message.get("content") or "")
         if arguments is None:
-            raise LLMError(f"Hugging Face fallback returned no usable tool call or JSON: {data}")
+            raise LLMError(f"Hugging Face returned no usable tool call or JSON: {data}")
         return arguments
 
     try:
         return json.loads(arguments)
     except json.JSONDecodeError as exc:
-        raise LLMError(f"Hugging Face fallback returned non-JSON arguments: {exc}") from exc
+        raise LLMError(f"Hugging Face returned non-JSON arguments: {exc}") from exc
+
+
+def _call_hf_text_with_token(token: str, system_instruction: str, prompt: str, temperature: float) -> str:
+    settings = get_settings()
+    payload = {
+        "model": settings.hf_model,
+        "temperature": temperature,
+        "messages": [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": prompt},
+        ],
+    }
+
+    try:
+        resp = httpx.post(
+            _HF_ROUTER_URL,
+            headers={"Authorization": f"Bearer {token}"},
+            json=payload,
+            timeout=30.0,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except httpx.HTTPError as exc:
+        raise LLMError(f"Hugging Face call failed: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise LLMError(f"Hugging Face returned a non-JSON response body: {exc}") from exc
+
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError) as exc:
+        raise LLMError(f"Hugging Face returned an unexpected response: {data}") from exc
+
+    if not content:
+        raise LLMError("Hugging Face returned an empty response")
+    return content
+
+
+def _is_quota_or_auth_error(exc: LLMError) -> bool:
+    text = str(exc)
+    return "402" in text or "429" in text or "401" in text or "403" in text
+
+
+def _call_hf_json(
+    system_instruction: str, prompt: str, response_schema: dict[str, Any], temperature: float
+) -> dict[str, Any]:
+    """Try every configured HF token in order, moving to the next only on a
+    genuine quota/auth failure (402/429/401/403) from the current one."""
+    tokens = get_settings().hf_tokens
+    if not tokens:
+        raise LLMError("HF_TOKEN is not configured")
+
+    last_error: LLMError | None = None
+    for token in tokens:
+        try:
+            return _call_hf_json_with_token(token, system_instruction, prompt, response_schema, temperature)
+        except LLMError as exc:
+            last_error = exc
+            if not _is_quota_or_auth_error(exc):
+                raise
+    raise last_error
+
+
+def _call_hf_text(system_instruction: str, prompt: str, temperature: float) -> str:
+    """Try every configured HF token in order, same rotation contract as
+    _call_hf_json."""
+    tokens = get_settings().hf_tokens
+    if not tokens:
+        raise LLMError("HF_TOKEN is not configured")
+
+    last_error: LLMError | None = None
+    for token in tokens:
+        try:
+            return _call_hf_text_with_token(token, system_instruction, prompt, temperature)
+        except LLMError as exc:
+            last_error = exc
+            if not _is_quota_or_auth_error(exc):
+                raise
+    raise last_error
 
 
 def generate_json(
@@ -195,29 +310,29 @@ def generate_json(
     response_schema: dict[str, Any],
     temperature: float = 0.3,
 ) -> dict[str, Any]:
-    """Return a structured object from the primary provider, falling back to
-    Hugging Face Inference Providers if Gemini is unavailable.
+    """Return a structured object from the primary provider (Hugging Face),
+    falling back to Gemini if HF is unavailable.
 
     Raises LLMError only if both providers fail, so callers can decide how to
     surface the failure rather than silently falling back to fabricated
     reasoning.
     """
     try:
-        return _call_gemini_json(system_instruction, prompt, response_schema, temperature)
-    except LLMError as gemini_error:
-        logger.warning("Gemini call failed, falling back to Hugging Face: %s", gemini_error)
+        return _call_hf_json(system_instruction, prompt, response_schema, temperature)
+    except LLMError as hf_error:
+        logger.warning("Hugging Face call failed, falling back to Gemini: %s", hf_error)
         try:
-            return _call_hf_fallback_json(system_instruction, prompt, response_schema, temperature)
-        except LLMError as hf_error:
-            logger.error("Hugging Face fallback also failed: %s", hf_error)
+            return _call_gemini_json(system_instruction, prompt, response_schema, temperature)
+        except LLMError as gemini_error:
+            logger.error("Gemini fallback also failed: %s", gemini_error)
             raise LLMError(
-                f"All LLM providers failed. Gemini: {gemini_error}. Hugging Face: {hf_error}"
-            ) from hf_error
+                f"All LLM providers failed. Hugging Face: {hf_error}. Gemini: {gemini_error}"
+            ) from gemini_error
 
 
-def generate_text(*, system_instruction: str, prompt: str, temperature: float = 0.4) -> str:
+def _call_gemini_text_with_key(api_key: str, system_instruction: str, prompt: str, temperature: float) -> str:
     settings = get_settings()
-    client = _get_client()
+    client = _get_client(api_key)
     try:
         response = client.models.generate_content(
             model=settings.gemini_model,
@@ -228,10 +343,44 @@ def generate_text(*, system_instruction: str, prompt: str, temperature: float = 
             ),
         )
     except Exception as exc:
-        logger.error("Gemini call failed: %s", exc)
         raise LLMError(f"Gemini call failed: {exc}") from exc
 
     text = getattr(response, "text", None)
     if not text:
         raise LLMError("Gemini returned an empty response")
     return text
+
+
+def _call_gemini_text(system_instruction: str, prompt: str, temperature: float) -> str:
+    """Try every configured Gemini API key in order, same rotation contract
+    as _call_gemini_json."""
+    keys = get_settings().gemini_api_keys
+    if not keys:
+        raise LLMError("GEMINI_API_KEY is not configured")
+
+    last_error: LLMError | None = None
+    for key in keys:
+        try:
+            return _call_gemini_text_with_key(key, system_instruction, prompt, temperature)
+        except LLMError as exc:
+            last_error = exc
+            if not _is_quota_or_auth_error(exc) and "RESOURCE_EXHAUSTED" not in str(exc):
+                raise
+    raise last_error
+
+
+def generate_text(*, system_instruction: str, prompt: str, temperature: float = 0.4) -> str:
+    """Return a free-text completion from the primary provider (Hugging
+    Face), falling back to Gemini if HF is unavailable. Same priority order
+    and error-surfacing contract as generate_json."""
+    try:
+        return _call_hf_text(system_instruction, prompt, temperature)
+    except LLMError as hf_error:
+        logger.warning("Hugging Face call failed, falling back to Gemini: %s", hf_error)
+        try:
+            return _call_gemini_text(system_instruction, prompt, temperature)
+        except LLMError as gemini_error:
+            logger.error("Gemini fallback also failed: %s", gemini_error)
+            raise LLMError(
+                f"All LLM providers failed. Hugging Face: {hf_error}. Gemini: {gemini_error}"
+            ) from gemini_error
