@@ -93,6 +93,87 @@ def test_outreach_plan_has_expected_shape(db_session, sample_lead):
     assert result["channels"] == ["email", "linkedin"]
 
 
+def test_outreach_planner_attaches_hunter_mcp_server(db_session, sample_lead):
+    """The Outreach Planner must attach signalis-hunter so it can genuinely
+    call find_email/verify_email, not just claim to check deliverability."""
+    persona = Persona(role="VP Sales", seniority="VP", industry="SaaS", company_size_band="51-200", geography="US")
+    solution = Solution(name="Test Solution", problem_solved="Testing things", channels=["email"])
+    mocked_response = {
+        "touchpoints": [{"day_offset": 0, "channel": "email", "content_theme": "intro", "message_copy": "Hi"}],
+        "channels": ["email"],
+        "summary": "A short plan.",
+    }
+    with patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-abc")) as mock_reasoning:
+        run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution)
+
+    _, reasoning_kwargs = mock_reasoning.call_args
+    mcp_names = {server["name"] for server in reasoning_kwargs["mcp_servers"]}
+    assert "signalis-hunter" in mcp_names
+
+
+def test_outreach_planner_includes_lead_email_in_prompt(db_session, sample_lead):
+    """The model has nothing to verify without the lead's email in context."""
+    sample_lead.email = "jane@acme.com"
+    persona = Persona(role="VP Sales", seniority="VP", industry="SaaS", company_size_band="51-200", geography="US")
+    solution = Solution(name="Test Solution", problem_solved="Testing things", channels=["email"])
+    mocked_response = {
+        "touchpoints": [{"day_offset": 0, "channel": "email", "content_theme": "intro", "message_copy": "Hi"}],
+        "channels": ["email"],
+        "summary": "A short plan.",
+    }
+    with patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-abc")) as mock_reasoning:
+        run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution)
+
+    _, reasoning_kwargs = mock_reasoning.call_args
+    assert "jane@acme.com" in reasoning_kwargs["prompt"]
+
+
+def test_outreach_planner_propagates_verified_email_when_queried(db_session, sample_lead):
+    """verified_email/email_verification_status must come from an independent
+    TrueForge session-events check (get_tool_call_results), not from the
+    model's own self-reported claim -- see _extract_email_verification."""
+    persona = Persona(role="VP Sales", seniority="VP", industry="SaaS", company_size_band="51-200", geography="US")
+    solution = Solution(name="Test Solution", problem_solved="Testing things", channels=["email"])
+    mocked_response = {
+        "touchpoints": [{"day_offset": 0, "channel": "email", "content_theme": "intro", "message_copy": "Hi"}],
+        "channels": ["email"],
+        "summary": "A short plan.",
+    }
+    tool_results = [
+        {"tool_name": "verify_email", "result": {"queried": True, "email": "jane@acme.com", "status": "valid"}},
+    ]
+    with (
+        patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-abc")),
+        patch("app.agents.outreach_planner.get_tool_call_results", return_value=tool_results) as mock_results,
+    ):
+        result = run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution)
+
+    mock_results.assert_called_once_with("session-abc", {"verify_email"})
+    assert result["verified_email"] == "jane@acme.com"
+    assert result["email_verification_status"] == "valid"
+
+
+def test_outreach_planner_reports_unverified_when_email_not_queried(db_session, sample_lead):
+    """If verify_email never genuinely ran on the TrueForge session (e.g. no
+    HUNTER_API_KEY configured, or no email to check), the status must be the
+    honest 'unverified' default, not a fabricated status."""
+    persona = Persona(role="VP Sales", seniority="VP", industry="SaaS", company_size_band="51-200", geography="US")
+    solution = Solution(name="Test Solution", problem_solved="Testing things", channels=["email"])
+    mocked_response = {
+        "touchpoints": [{"day_offset": 0, "channel": "email", "content_theme": "intro", "message_copy": "Hi"}],
+        "channels": ["email"],
+        "summary": "A short plan.",
+    }
+    with (
+        patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-abc")),
+        patch("app.agents.outreach_planner.get_tool_call_results", return_value=[]),
+    ):
+        result = run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution)
+
+    assert result["verified_email"] is None
+    assert result["email_verification_status"] == "unverified"
+
+
 def test_outreach_planner_registers_and_attaches_copywriting_skill(db_session, sample_lead):
     """The Outreach Planner must register the outreach-copywriting-style-guide
     TrueForge skill and attach it (name-only reference) to the agent call, so
@@ -249,6 +330,24 @@ def test_persona_fit_handles_missing_persona_and_solution(db_session, sample_lea
     assert result["fit"] == "partial_fit"
     assert "missing_data" in result
     assert agent_run_id is not None
+
+
+def test_persona_fit_attaches_exa_mcp_server(db_session, sample_lead):
+    """Persona Fit must attach signalis-exa alongside the existing
+    enrichment/research servers so it can genuinely call
+    search_company_semantic, not just claim a second, differently-sourced
+    read is possible."""
+    with patch(
+        "app.agents.persona_fit.run_agent_reasoning",
+        return_value=({"fit": "full_fit", "reasoning": "test", "missing_data": []}, "session-mno"),
+    ) as mock_reasoning:
+        run_persona_fit(db_session, sample_lead, None, None)
+
+    _, reasoning_kwargs = mock_reasoning.call_args
+    mcp_names = {server["name"] for server in reasoning_kwargs["mcp_servers"]}
+    assert "signalis-exa" in mcp_names
+    assert "signalis-research" in mcp_names
+    assert "signalis-enrichment" in mcp_names
 
 
 def test_run_persona_fit_reuses_completed_run_instead_of_hitting_gate_again(db_session, sample_lead):

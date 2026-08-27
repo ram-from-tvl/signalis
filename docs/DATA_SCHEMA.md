@@ -4,16 +4,18 @@ Signalis persists all state in a single SQLite database (`backend/signalis.db`),
 created automatically from the SQLAlchemy models on application startup. There
 is still no migration framework in this build: new tables are created via
 `Base.metadata.create_all`, sufficient for every schema change so far except
-one — a nullable column added to an already-existing table
-(`agent_runs.trueforge_session_id`), which `create_all` does not retrofit
-onto existing rows. That one case is handled by a small, purpose-built
+nullable columns added to an already-existing table
+(`agent_runs.trueforge_session_id`, `outreach_plans.verified_email`,
+`outreach_plans.email_verification_status`,
+`outreach_plans.email_verification_reason`), which `create_all` does not
+retrofit onto existing rows. Those cases are handled by a small, purpose-built
 additive-only patcher, `app/db/migrations.py::run_startup_migrations`, run
 right after `create_all` on every startup: it inspects each table's current
 columns and issues `ALTER TABLE ... ADD COLUMN` only for ones genuinely
 missing, so it is a no-op on a fresh database (where `create_all` already
 created the column) and idempotent on repeated runs. This was judged the
-right scope for a single-column addition; see DECISIONS.md for why Alembic
-was not pulled in for it. Tables that represent a decision the system
+right scope for a handful of nullable-column additions; see DECISIONS.md
+for why Alembic was not pulled in for it. Tables that represent a decision the system
 makes (stage classifications, outreach plans) are append-only history tables
 rather than rows that get overwritten in place, so the full reasoning history
 behind any current state is always inspectable.
@@ -188,6 +190,9 @@ except by an explicit approve/reject/edit action.
 | created_at | datetime | |
 | approved_at | datetime, nullable | |
 | approved_by | string, nullable | |
+| verified_email | string, nullable | the email Hunter.io verified or found, if `verify_email` was genuinely called for this plan |
+| email_verification_status | string, nullable | `valid`/`invalid`/`accept_all`/`webmail`/`disposable`/`unknown` (Hunter's own statuses, confirmed via TrueForge's session events, never taken from the model's self-report — see docs/DECISIONS.md), or `unverified` (never queried) / `verification_failed` (queried but Hunter/the tool itself failed) / `evidence_unavailable` (couldn't confirm whether the tool ran) |
+| email_verification_reason | string, nullable | Hunter's own failure reason (e.g. "HUNTER_API_KEY is not configured") when `email_verification_status` is `verification_failed`; null in every other case |
 
 Every newly generated plan starts as `pending_approval`, regardless of the
 confidence of the classification it is based on — this is the mandatory

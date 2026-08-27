@@ -23,12 +23,16 @@ flowchart TD
     MCP --> PF
     PF -->|"MCP tool call (as needed)"| RESEARCH[["signalis-research MCP server\nsearch_company_news (Tavily)"]]
     RESEARCH --> PF
+    PF -->|"MCP tool call (as needed)"| EXA[["signalis-exa MCP server\nsearch_company_semantic (Exa)"]]
+    EXA --> PF
     PF --> BS["Buying Stage Orchestrator Agent\n(TrueForge session)"]
     BS -->|"scoring computation"| SB[["Daytona sandbox\nrecency/strength-weighted score"]]
     SB --> BS
     BS --> Decision{confidence below threshold?}
     Decision -->|yes, low confidence| OP["Outreach Planner Agent\n(TrueForge session)"]
     Decision -->|no, high confidence| OP
+    OP -->|"MCP tool call (as needed)"| HUNTER[["signalis-hunter MCP server\nfind_email / verify_email"]]
+    HUNTER --> OP
     OP --> EX["Explainability Agent\n(TrueForge session)"]
     EX --> Persist[(Persist stage_classification + outreach_plan\nboth start pending_approval)]
     Persist --> Human{Marketer reviews in UI}
@@ -65,18 +69,23 @@ below for the full pause/approve/reject mechanics.
    the `signals` rows in place and is handed forward as a summary.
 
 2. **Persona Fit Agent** receives the lead's firmographic profile plus the
-   currently active persona and solution ICP, and has two MCP servers
-   attached: `signalis-enrichment` and `signalis-research`. When the lead's
-   industry or company size is missing or worth verifying, it genuinely
-   calls the `classify_company_industry` and/or `estimate_company_size_band`
-   MCP tools before answering — this is TrueForge discovering and invoking a
-   real remote tool over MCP, not a Python function call embedded in the
-   agent's own code. It also has a `search_company_news` tool (served by
-   `signalis-research`, backed by the live Tavily search API) available and
-   calls it when recent external context — funding news, a hiring surge,
-   a product launch — would genuinely sharpen the fit assessment; this is
-   not called on every lead, since recent news is not always relevant or
-   available. It returns a fit classification (`full_fit` / `partial_fit` /
+   currently active persona and solution ICP, and has three MCP servers
+   attached: `signalis-enrichment`, `signalis-research`, and `signalis-exa`.
+   When the lead's industry or company size is missing or worth verifying,
+   it genuinely calls the `classify_company_industry` and/or
+   `estimate_company_size_band` MCP tools before answering — this is
+   TrueForge discovering and invoking a real remote tool over MCP, not a
+   Python function call embedded in the agent's own code. It also has
+   `search_company_news` (`signalis-research`, backed by the live Tavily
+   search API) and `search_company_semantic` (`signalis-exa`, backed by the
+   live Exa search API — a differently-sourced, semantic/company-focused
+   search) available, and calls one or both when recent external context —
+   funding news, a hiring surge, a product launch — would genuinely sharpen
+   the fit assessment; this is not called on every lead, since recent news
+   is not always relevant or available, and the two search tools are
+   complementary rather than redundant (Tavily for broad web search, Exa
+   for a semantic second read when Tavily's results are thin or ambiguous).
+   It returns a fit classification (`full_fit` / `partial_fit` /
    `mismatch`), reasoning, and any missing data it had to work around. This
    result is handed to both the Buying Stage Orchestrator (fit context
    informs how much weight to give ambiguous signals) and later to the
@@ -106,20 +115,30 @@ below for the full pause/approve/reject mechanics.
    regardless of branch, still requires a separate approval step.
 
 5. **Outreach Planner Agent** receives the stage, confidence, persona fit
-   result, active persona, and active solution, and returns a 3-5 touchpoint
-   micro-plan with day offsets, channels, content themes, and example
-   message copy. The resulting `outreach_plans` row always starts as
-   `pending_approval`. Its system instruction is deliberately task-mechanical
-   only (output schema, what lead/persona context to weigh, touchpoint
-   count/day-offset requirements); the actual copywriting craft guidance —
-   channel-appropriate tone, referencing a buying signal without sounding
-   surveillance-creepy, cadence structure, avoiding generic AI-sounding copy,
-   strong-vs-weak opening line examples — lives in a TrueForge **skill**
-   (`outreach-copywriting-style-guide`, `backend/app/agents/skills/
-   outreach_copywriting_style_guide/SKILL.md`) that this agent has access to
-   and consults on demand rather than re-sending on every call. See
-   `docs/DECISIONS.md` for why, and how the direct Gemini/HF fallback path
-   (which has no TrueForge skill access) is kept from regressing.
+   result, active persona, active solution, and the lead's email, and
+   returns a 3-5 touchpoint micro-plan with day offsets, channels, content
+   themes, and example message copy. The resulting `outreach_plans` row
+   always starts as `pending_approval`. Its system instruction is
+   deliberately task-mechanical only (output schema, what lead/persona
+   context to weigh, touchpoint count/day-offset requirements); the actual
+   copywriting craft guidance — channel-appropriate tone, referencing a
+   buying signal without sounding surveillance-creepy, cadence structure,
+   avoiding generic AI-sounding copy, strong-vs-weak opening line examples —
+   lives in a TrueForge **skill** (`outreach-copywriting-style-guide`,
+   `backend/app/agents/skills/outreach_copywriting_style_guide/SKILL.md`)
+   that this agent has access to and consults on demand rather than
+   re-sending on every call. See `docs/DECISIONS.md` for why, and how the
+   direct Gemini/HF fallback path (which has no TrueForge skill access) is
+   kept from regressing. It also has the `signalis-hunter` MCP server
+   attached and genuinely calls `verify_email` (and `find_email` if the
+   email is missing but a company domain is known) before finalizing
+   `message_copy`, so a rep knows whether the plan is actually sendable
+   — the deliverability outcome is recorded on the persisted plan as
+   `verified_email`/`email_verification_status` (see `docs/DATA_SCHEMA.md`),
+   model-authored like every other agent's structured output rather than
+   independently re-verified against TrueForge session events, since the
+   worst-case failure mode here is a conservative "unverified" report, not
+   a false capability claim.
 
 6. **Explainability Agent** receives the structured outputs of all four
    prior agents plus the `requires_approval` flag, and synthesizes a

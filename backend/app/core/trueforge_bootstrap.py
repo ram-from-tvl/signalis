@@ -114,6 +114,34 @@ def main() -> None:
         },
     )
 
+    print("Registering the Exa search MCP server...")
+    _put_or_post(
+        "PUT",
+        f"{base}/api/v1/settings/mcp-servers",
+        {
+            "manifest": {
+                "type": "remote",
+                "name": "signalis-exa",
+                "url": "http://127.0.0.1:8793/mcp",
+                "description": "Semantic/company-focused web search via Exa, complementing the Tavily-backed research server",
+            }
+        },
+    )
+
+    print("Registering the Hunter.io email MCP server...")
+    _put_or_post(
+        "PUT",
+        f"{base}/api/v1/settings/mcp-servers",
+        {
+            "manifest": {
+                "type": "remote",
+                "name": "signalis-hunter",
+                "url": "http://127.0.0.1:8794/mcp",
+                "description": "Email finder and verifier via Hunter.io, so outreach copy is only generated for a deliverable address",
+            }
+        },
+    )
+
     print("Registering the outreach copywriting style guide skill...")
     # Also registered lazily on the Outreach Planner's first run; doing it
     # here too avoids relying on registration order at cold start.

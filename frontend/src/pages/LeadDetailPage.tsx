@@ -41,6 +41,38 @@ function formatDate(iso: string) {
   })
 }
 
+type BadgeVariant = "success" | "destructive" | "warning" | "outline"
+
+// Every value email_verification_status can actually hold (Hunter.io's own
+// statuses, plus this app's own not-queried/failure states) gets an
+// explicit, distinct label here — an unhandled status must never silently
+// collapse into "will bounce", since accept_all/unknown are genuinely
+// uncertain, not failures.
+function emailVerificationBadge(status: string): { variant: BadgeVariant; label: string } {
+  switch (status) {
+    case "valid":
+      return { variant: "success", label: "Email verified" }
+    case "invalid":
+      return { variant: "destructive", label: "Email invalid — will bounce" }
+    case "accept_all":
+      return { variant: "warning", label: "Email uncertain (accept-all domain)" }
+    case "webmail":
+      return { variant: "warning", label: "Email uncertain (webmail address)" }
+    case "disposable":
+      return { variant: "destructive", label: "Email invalid — disposable address" }
+    case "unknown":
+      return { variant: "warning", label: "Email deliverability unknown" }
+    case "verification_failed":
+      return { variant: "warning", label: "Verification failed — unconfirmed" }
+    case "evidence_unavailable":
+      return { variant: "outline", label: "Verification evidence unavailable" }
+    case "unverified":
+      return { variant: "outline", label: "Email unverified" }
+    default:
+      return { variant: "outline", label: "Email unverified" }
+  }
+}
+
 export function LeadDetailPage() {
   const { leadId } = useParams<{ leadId: string }>()
   const queryClient = useQueryClient()
@@ -424,19 +456,29 @@ export function LeadDetailPage() {
                     {latest_plan.channels.join(", ") || "No channels"} &middot; {latest_plan.touchpoints.length} touchpoint(s)
                   </CardDescription>
                 </div>
-                <Badge
-                  variant={
-                    latest_plan.status === "approved"
-                      ? "success"
-                      : latest_plan.status === "rejected"
-                        ? "destructive"
-                        : latest_plan.status === "superseded"
-                          ? "outline"
-                          : "warning"
-                  }
-                >
-                  {latest_plan.status.replace("_", " ")}
-                </Badge>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {latest_plan.email_verification_status && (
+                    <Badge
+                      variant={emailVerificationBadge(latest_plan.email_verification_status).variant}
+                      title={latest_plan.email_verification_reason ?? undefined}
+                    >
+                      {emailVerificationBadge(latest_plan.email_verification_status).label}
+                    </Badge>
+                  )}
+                  <Badge
+                    variant={
+                      latest_plan.status === "approved"
+                        ? "success"
+                        : latest_plan.status === "rejected"
+                          ? "destructive"
+                          : latest_plan.status === "superseded"
+                            ? "outline"
+                            : "warning"
+                    }
+                  >
+                    {latest_plan.status.replace("_", " ")}
+                  </Badge>
+                </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
                 <ol className="flex flex-col gap-3">
