@@ -70,6 +70,20 @@ def finish_run(
     return run
 
 
+def _trueforge_models_to_try(model: str) -> list[str]:
+    """The caller-requested model first (so an explicit override is always
+    honored), then every other configured trueforge_models entry, without
+    duplicates — so a quota failure on one HF-backed provider rotates to the
+    next registered provider/key before falling through to the Python
+    direct-call path."""
+    settings = get_settings()
+    models = [model]
+    for candidate in settings.trueforge_models:
+        if candidate not in models:
+            models.append(candidate)
+    return models
+
+
 def run_agent_reasoning(
     *,
     trueforge_agent_name: str,
@@ -86,9 +100,11 @@ def run_agent_reasoning(
     model calls, MCP tool discovery/execution, context management) rather
     than a bare model call.
 
-    Falls back to a direct Gemini/Hugging-Face call if TrueForge is
-    disabled or unreachable — same prompt and schema, a transport fallback
-    not a second reasoning path.
+    Tries every configured TrueForge model/provider in order (see
+    Settings.trueforge_models) before falling back to a direct Gemini/
+    Hugging-Face call — so a quota failure on one HF key rotates to another
+    registered HF provider first, and only falls through to the tool-less
+    Python path if every TrueForge-registered provider fails.
 
     Returns (parsed_result, trueforge_session_id); session_id is None on
     the fallback path (no TrueForge session exists there), and is what
@@ -106,27 +122,36 @@ def run_agent_reasoning(
     """
     settings = get_settings()
     if settings.trueforge_enabled:
-        try:
-            ensure_agent(
-                trueforge_agent_name,
-                model=model,
-                instructions=(
-                    f"{system_instruction}\n\nRespond with a single JSON object matching this "
-                    f"JSON schema exactly, and nothing else: {json.dumps(response_schema)}"
-                ),
-                mcp_servers=mcp_servers,
-                skills=skills,
-            )
-            result, session_id = run_turn(trueforge_agent_name, prompt)
-            if isinstance(result, list):
-                raise AgentPausedForToolApproval(result)
-            return result, session_id
-        except TrueForgeError as exc:
-            logger.warning(
-                "TrueForge call failed for %s, falling back to direct LLM call: %s",
-                trueforge_agent_name,
-                exc,
-            )
+        last_trueforge_error: TrueForgeError | None = None
+        for candidate_model in _trueforge_models_to_try(model):
+            try:
+                ensure_agent(
+                    trueforge_agent_name,
+                    model=candidate_model,
+                    instructions=(
+                        f"{system_instruction}\n\nRespond with a single JSON object matching this "
+                        f"JSON schema exactly, and nothing else: {json.dumps(response_schema)}"
+                    ),
+                    mcp_servers=mcp_servers,
+                    skills=skills,
+                )
+                result, session_id = run_turn(trueforge_agent_name, prompt)
+                if isinstance(result, list):
+                    raise AgentPausedForToolApproval(result)
+                return result, session_id
+            except TrueForgeError as exc:
+                last_trueforge_error = exc
+                logger.warning(
+                    "TrueForge call failed for %s on model %s, trying next configured model: %s",
+                    trueforge_agent_name,
+                    candidate_model,
+                    exc,
+                )
+        logger.warning(
+            "TrueForge call failed for %s on every configured model, falling back to direct LLM call: %s",
+            trueforge_agent_name,
+            last_trueforge_error,
+        )
 
     fallback_instruction = system_instruction
     if mcp_servers:
@@ -182,24 +207,33 @@ def run_agent_reasoning_with_delegations(
     """
     settings = get_settings()
     if settings.trueforge_enabled:
-        try:
-            ensure_agent(
-                trueforge_agent_name,
-                model=model,
-                instructions=(
-                    f"{system_instruction}\n\nRespond with a single JSON object matching this "
-                    f"JSON schema exactly, and nothing else: {json.dumps(response_schema)}"
-                ),
-            )
-            output, _session_id, delegations = run_turn(trueforge_agent_name, prompt, with_delegations=True)
-            return output, delegations, True
-        except TrueForgeError as exc:
-            logger.warning(
-                "TrueForge call failed for %s, falling back to direct LLM call "
-                "(subagent delegation unavailable on the fallback path): %s",
-                trueforge_agent_name,
-                exc,
-            )
+        last_trueforge_error: TrueForgeError | None = None
+        for candidate_model in _trueforge_models_to_try(model):
+            try:
+                ensure_agent(
+                    trueforge_agent_name,
+                    model=candidate_model,
+                    instructions=(
+                        f"{system_instruction}\n\nRespond with a single JSON object matching this "
+                        f"JSON schema exactly, and nothing else: {json.dumps(response_schema)}"
+                    ),
+                )
+                output, _session_id, delegations = run_turn(trueforge_agent_name, prompt, with_delegations=True)
+                return output, delegations, True
+            except TrueForgeError as exc:
+                last_trueforge_error = exc
+                logger.warning(
+                    "TrueForge call failed for %s on model %s, trying next configured model: %s",
+                    trueforge_agent_name,
+                    candidate_model,
+                    exc,
+                )
+        logger.warning(
+            "TrueForge call failed for %s on every configured model, falling back to direct LLM call "
+            "(subagent delegation unavailable on the fallback path): %s",
+            trueforge_agent_name,
+            last_trueforge_error,
+        )
 
     effective_instruction = fallback_instruction if fallback_instruction is not None else system_instruction
     try:

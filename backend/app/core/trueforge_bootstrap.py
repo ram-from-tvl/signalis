@@ -49,23 +49,31 @@ def main() -> None:
             },
         )
 
-    if not settings.hf_token:
+    hf_tokens = settings.hf_tokens
+    if not hf_tokens:
         print("HF_TOKEN is not set; skipping Hugging Face provider registration.", file=sys.stderr)
     else:
-        print("Registering Hugging Face fallback model provider...")
-        _put_or_post(
-            "PUT",
-            f"{base}/api/v1/settings/model-providers",
-            {
-                "manifest": {
-                    "type": "custom",
-                    "name": "huggingface",
-                    "base_url": "https://router.huggingface.co/v1",
-                    "auth": {"api_key": settings.hf_token},
-                    "models": [{"model_id": settings.hf_model, "name": "qwen3-4b", "properties": {}}],
-                }
-            },
-        )
+        # One named provider per configured HF token (huggingface,
+        # huggingface-2, huggingface-3, ...) so run_agent_reasoning can
+        # rotate trueforge_model to a different provider/key when one's
+        # quota is exhausted (see Settings.trueforge_models), rather than
+        # only having a single HF identity registered with TrueForge.
+        for i, token in enumerate(hf_tokens):
+            provider_name = "huggingface" if i == 0 else f"huggingface-{i + 1}"
+            print(f"Registering Hugging Face model provider '{provider_name}'...")
+            _put_or_post(
+                "PUT",
+                f"{base}/api/v1/settings/model-providers",
+                {
+                    "manifest": {
+                        "type": "custom",
+                        "name": provider_name,
+                        "base_url": "https://router.huggingface.co/v1",
+                        "auth": {"api_key": token},
+                        "models": [{"model_id": settings.hf_model, "name": "qwen3-4b", "properties": {}}],
+                    }
+                },
+            )
 
     if not settings.daytona_api_key:
         print("DAYTONA_API_KEY is not set; skipping Daytona sandbox provider registration.", file=sys.stderr)

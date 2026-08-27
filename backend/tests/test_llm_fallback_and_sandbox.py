@@ -1,4 +1,4 @@
-"""Tests for the Gemini-to-Hugging-Face fallback and Daytona sandbox scoring,
+"""Tests for the Hugging-Face-to-Gemini fallback and Daytona sandbox scoring,
 with each external transport mocked at its own boundary."""
 from __future__ import annotations
 
@@ -33,32 +33,98 @@ SCHEMA = {
 }
 
 
-def test_generate_json_uses_gemini_when_it_succeeds():
-    with patch("app.core.llm._call_gemini_json", return_value={"stage": "mid", "confidence": 0.8}) as gemini, \
-         patch("app.core.llm._call_hf_fallback_json") as hf:
+def test_generate_json_uses_hf_when_it_succeeds():
+    with patch("app.core.llm._call_hf_json", return_value={"stage": "mid", "confidence": 0.8}) as hf, \
+         patch("app.core.llm._call_gemini_json") as gemini:
         result = generate_json(system_instruction="x", prompt="y", response_schema=SCHEMA)
     assert result == {"stage": "mid", "confidence": 0.8}
-    gemini.assert_called_once()
-    hf.assert_not_called()
+    hf.assert_called_once()
+    gemini.assert_not_called()
 
 
-def test_generate_json_falls_back_to_hf_when_gemini_fails():
-    with patch("app.core.llm._call_gemini_json", side_effect=LLMError("quota exceeded")), \
-         patch("app.core.llm._call_hf_fallback_json", return_value={"stage": "late", "confidence": 0.6}) as hf:
+def test_generate_json_falls_back_to_gemini_when_hf_fails():
+    with patch("app.core.llm._call_hf_json", side_effect=LLMError("hf unavailable")), \
+         patch("app.core.llm._call_gemini_json", return_value={"stage": "late", "confidence": 0.6}) as gemini:
         result = generate_json(system_instruction="x", prompt="y", response_schema=SCHEMA)
     assert result == {"stage": "late", "confidence": 0.6}
-    hf.assert_called_once()
+    gemini.assert_called_once()
 
 
 def test_generate_json_raises_when_both_providers_fail():
-    with patch("app.core.llm._call_gemini_json", side_effect=LLMError("gemini down")), \
-         patch("app.core.llm._call_hf_fallback_json", side_effect=LLMError("hf down")):
+    with patch("app.core.llm._call_hf_json", side_effect=LLMError("hf down")), \
+         patch("app.core.llm._call_gemini_json", side_effect=LLMError("gemini down")):
         with pytest.raises(LLMError, match="All LLM providers failed"):
             generate_json(system_instruction="x", prompt="y", response_schema=SCHEMA)
 
 
-def test_hf_fallback_parses_tool_call_arguments():
-    from app.core.llm import _call_hf_fallback_json
+def test_call_hf_json_rotates_to_next_token_on_quota_error():
+    """Regression test: a 402/429/401/403 from one configured HF token must
+    move on to the next configured token rather than failing the whole call
+    — this is what lets multiple HF_TOKEN/HF_TOKEN_1/HF_TOKEN_2 keys actually
+    provide redundancy instead of just being read and ignored."""
+    from app.core.llm import _call_hf_json
+
+    call_count = {"n": 0}
+
+    def fake_call_with_token(token, *args, **kwargs):
+        call_count["n"] += 1
+        if token == "token-1":
+            raise LLMError("Hugging Face call failed: 402 Payment Required")
+        return {"stage": "late", "confidence": 0.7}
+
+    with patch("app.core.llm.get_settings") as mock_settings, \
+         patch("app.core.llm._call_hf_json_with_token", side_effect=fake_call_with_token):
+        mock_settings.return_value.hf_tokens = ["token-1", "token-2"]
+        result = _call_hf_json("x", "y", SCHEMA, 0.3)
+
+    assert result == {"stage": "late", "confidence": 0.7}
+    assert call_count["n"] == 2
+
+
+def test_call_hf_json_does_not_rotate_on_non_quota_error():
+    """A genuine non-quota failure (e.g. a malformed response shape) from
+    the first token must not be masked by silently trying the next token —
+    only 402/429/401/403 warrant rotation, everything else should surface
+    immediately."""
+    from app.core.llm import _call_hf_json
+
+    call_count = {"n": 0}
+
+    def fake_call_with_token(token, *args, **kwargs):
+        call_count["n"] += 1
+        raise LLMError("Hugging Face returned an unexpected response: {}")
+
+    with patch("app.core.llm.get_settings") as mock_settings, \
+         patch("app.core.llm._call_hf_json_with_token", side_effect=fake_call_with_token):
+        mock_settings.return_value.hf_tokens = ["token-1", "token-2"]
+        with pytest.raises(LLMError, match="unexpected response"):
+            _call_hf_json("x", "y", SCHEMA, 0.3)
+
+    assert call_count["n"] == 1
+
+
+def test_call_gemini_json_rotates_to_next_key_on_quota_error():
+    from app.core.llm import _call_gemini_json
+
+    call_count = {"n": 0}
+
+    def fake_call_with_key(key, *args, **kwargs):
+        call_count["n"] += 1
+        if key == "key-1":
+            raise LLMError("Gemini call failed: 429 RESOURCE_EXHAUSTED")
+        return {"stage": "mid", "confidence": 0.5}
+
+    with patch("app.core.llm.get_settings") as mock_settings, \
+         patch("app.core.llm._call_gemini_json_with_key", side_effect=fake_call_with_key):
+        mock_settings.return_value.gemini_api_keys = ["key-1", "key-2"]
+        result = _call_gemini_json("x", "y", SCHEMA, 0.3)
+
+    assert result == {"stage": "mid", "confidence": 0.5}
+    assert call_count["n"] == 2
+
+
+def test_hf_json_parses_tool_call_arguments():
+    from app.core.llm import _call_hf_json
 
     fake_response = MagicMock()
     fake_response.raise_for_status = MagicMock()
@@ -74,37 +140,66 @@ def test_hf_fallback_parses_tool_call_arguments():
         ]
     }
     with patch("app.core.llm.get_settings") as mock_settings, patch("httpx.post", return_value=fake_response):
-        mock_settings.return_value.hf_token = "fake-token"
+        mock_settings.return_value.hf_tokens = ["fake-token"]
         mock_settings.return_value.hf_model = "fake-model"
-        result = _call_hf_fallback_json("x", "y", SCHEMA, 0.3)
+        result = _call_hf_json("x", "y", SCHEMA, 0.3)
     assert result == {"stage": "early", "confidence": 0.3}
 
 
-def test_hf_fallback_raises_llm_error_on_transport_failure():
-    from app.core.llm import _call_hf_fallback_json
+def test_hf_json_parses_text_wrapped_tool_call():
+    """Regression test: some HF-served models emit a text-form
+    <tool_call>{"name": ..., "arguments": {...}}</tool_call> instead of
+    using the tool_calls field, despite tool_choice — this must still be
+    recovered as usable arguments, not rejected as "no usable tool call"."""
+    from app.core.llm import _call_hf_json
+
+    fake_response = MagicMock()
+    fake_response.raise_for_status = MagicMock()
+    fake_response.json.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        '<tool_call>\n{"name": "submit_result", "arguments": '
+                        '{"stage": "late", "confidence": 0.7}}\n</tool_call>'
+                    ),
+                    "tool_calls": [],
+                }
+            }
+        ]
+    }
+    with patch("app.core.llm.get_settings") as mock_settings, patch("httpx.post", return_value=fake_response):
+        mock_settings.return_value.hf_tokens = ["fake-token"]
+        mock_settings.return_value.hf_model = "fake-model"
+        result = _call_hf_json("x", "y", SCHEMA, 0.3)
+    assert result == {"stage": "late", "confidence": 0.7}
+
+
+def test_hf_json_raises_llm_error_on_transport_failure():
+    from app.core.llm import _call_hf_json
 
     with patch("app.core.llm.get_settings") as mock_settings, \
          patch("httpx.post", side_effect=httpx.ConnectError("connection refused")):
-        mock_settings.return_value.hf_token = "fake-token"
+        mock_settings.return_value.hf_tokens = ["fake-token"]
         mock_settings.return_value.hf_model = "fake-model"
-        with pytest.raises(LLMError, match="Hugging Face fallback call failed"):
-            _call_hf_fallback_json("x", "y", SCHEMA, 0.3)
+        with pytest.raises(LLMError, match="Hugging Face call failed"):
+            _call_hf_json("x", "y", SCHEMA, 0.3)
 
 
-def test_hf_fallback_wraps_json_decode_error_as_llm_error():
+def test_hf_json_wraps_json_decode_error_as_llm_error():
     """Regression test: a malformed response body (e.g. an HTML error page
     served with a 200 status) must surface as LLMError, not an unhandled
     JSONDecodeError, so generate_json's fallback handling is never bypassed."""
-    from app.core.llm import _call_hf_fallback_json
+    from app.core.llm import _call_hf_json
 
     fake_response = MagicMock()
     fake_response.raise_for_status = MagicMock()
     fake_response.json.side_effect = json.JSONDecodeError("bad json", "doc", 0)
     with patch("app.core.llm.get_settings") as mock_settings, patch("httpx.post", return_value=fake_response):
-        mock_settings.return_value.hf_token = "fake-token"
+        mock_settings.return_value.hf_tokens = ["fake-token"]
         mock_settings.return_value.hf_model = "fake-model"
         with pytest.raises(LLMError, match="non-JSON response body"):
-            _call_hf_fallback_json("x", "y", SCHEMA, 0.3)
+            _call_hf_json("x", "y", SCHEMA, 0.3)
 
 
 def test_sandbox_script_safely_escapes_malicious_signal_content():
@@ -585,7 +680,7 @@ def test_run_agent_reasoning_falls_back_when_update_agent_returns_malformed_json
     with patch("app.agents.common.get_settings") as mock_settings, \
          patch("httpx.post", return_value=create_conflict), \
          patch("httpx.get", return_value=malformed_list_response), \
-         patch("app.core.llm._call_gemini_json", return_value={"stage": "mid", "confidence": 0.5}) as gemini:
+         patch("app.agents.common.generate_json", return_value={"stage": "mid", "confidence": 0.5}) as generate_json_mock:
         mock_settings.return_value.trueforge_enabled = True
         result, session_id = run_agent_reasoning(
             trueforge_agent_name="some-agent",
@@ -596,7 +691,7 @@ def test_run_agent_reasoning_falls_back_when_update_agent_returns_malformed_json
         )
     assert result == {"stage": "mid", "confidence": 0.5}
     assert session_id is None
-    gemini.assert_called_once()
+    generate_json_mock.assert_called_once()
 
 
 def test_poll_turn_wraps_malformed_state_as_trueforge_error():
