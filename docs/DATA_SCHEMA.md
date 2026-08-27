@@ -191,7 +191,7 @@ except by an explicit approve/reject/edit action.
 | approved_at | datetime, nullable | |
 | approved_by | string, nullable | |
 | verified_email | string, nullable | the email Hunter.io verified or found, if `verify_email` was genuinely called for this plan |
-| email_verification_status | string, nullable | `valid`/`invalid`/`accept_all`/`unknown` (Hunter's own statuses, confirmed via TrueForge's session events, never taken from the model's self-report — see docs/DECISIONS.md), or `unverified` (never queried) / `verification_failed` (queried but Hunter/the tool itself failed) / `evidence_unavailable` (couldn't confirm whether the tool ran) |
+| email_verification_status | string, nullable | `valid`/`invalid`/`accept_all`/`webmail`/`disposable`/`unknown` (Hunter's own statuses, confirmed via TrueForge's session events, never taken from the model's self-report — see docs/DECISIONS.md), or `unverified` (never queried) / `verification_failed` (queried but Hunter/the tool itself failed) / `evidence_unavailable` (couldn't confirm whether the tool ran) |
 | email_verification_reason | string, nullable | Hunter's own failure reason (e.g. "HUNTER_API_KEY is not configured") when `email_verification_status` is `verification_failed`; null in every other case |
 
 Every newly generated plan starts as `pending_approval`, regardless of the

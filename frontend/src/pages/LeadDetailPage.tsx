@@ -56,6 +56,10 @@ function emailVerificationBadge(status: string): { variant: BadgeVariant; label:
       return { variant: "destructive", label: "Email invalid — will bounce" }
     case "accept_all":
       return { variant: "warning", label: "Email uncertain (accept-all domain)" }
+    case "webmail":
+      return { variant: "warning", label: "Email uncertain (webmail address)" }
+    case "disposable":
+      return { variant: "destructive", label: "Email invalid — disposable address" }
     case "unknown":
       return { variant: "warning", label: "Email deliverability unknown" }
     case "verification_failed":
