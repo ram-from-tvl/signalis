@@ -99,8 +99,10 @@ export interface OutreachPlan {
   created_at: string
   approved_at: string | null
   approved_by: string | null
+  // Mirrors OutreachPlanOut (backend/app/schemas/classification.py) — keep in sync.
   verified_email: string | null
   email_verification_status: string | null
+  email_verification_reason: string | null
 }
 
 export interface AgentRun {

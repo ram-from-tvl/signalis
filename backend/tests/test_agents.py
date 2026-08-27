@@ -129,34 +129,45 @@ def test_outreach_planner_includes_lead_email_in_prompt(db_session, sample_lead)
 
 
 def test_outreach_planner_propagates_verified_email_when_queried(db_session, sample_lead):
+    """verified_email/email_verification_status must come from an independent
+    TrueForge session-events check (get_tool_call_results), not from the
+    model's own self-reported claim -- see _extract_email_verification."""
     persona = Persona(role="VP Sales", seniority="VP", industry="SaaS", company_size_band="51-200", geography="US")
     solution = Solution(name="Test Solution", problem_solved="Testing things", channels=["email"])
     mocked_response = {
         "touchpoints": [{"day_offset": 0, "channel": "email", "content_theme": "intro", "message_copy": "Hi"}],
         "channels": ["email"],
         "summary": "A short plan.",
-        "email_verification": {"queried": True, "email": "jane@acme.com", "status": "valid"},
     }
-    with patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-abc")):
+    tool_results = [
+        {"tool_name": "verify_email", "result": {"queried": True, "email": "jane@acme.com", "status": "valid"}},
+    ]
+    with (
+        patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-abc")),
+        patch("app.agents.outreach_planner.get_tool_call_results", return_value=tool_results) as mock_results,
+    ):
         result = run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution)
 
+    mock_results.assert_called_once_with("session-abc", {"verify_email"})
     assert result["verified_email"] == "jane@acme.com"
     assert result["email_verification_status"] == "valid"
 
 
 def test_outreach_planner_reports_unverified_when_email_not_queried(db_session, sample_lead):
-    """If the model never called verify_email (e.g. no HUNTER_API_KEY
-    configured, or no email to check), the status must be the honest
-    'unverified' default, not a fabricated status."""
+    """If verify_email never genuinely ran on the TrueForge session (e.g. no
+    HUNTER_API_KEY configured, or no email to check), the status must be the
+    honest 'unverified' default, not a fabricated status."""
     persona = Persona(role="VP Sales", seniority="VP", industry="SaaS", company_size_band="51-200", geography="US")
     solution = Solution(name="Test Solution", problem_solved="Testing things", channels=["email"])
     mocked_response = {
         "touchpoints": [{"day_offset": 0, "channel": "email", "content_theme": "intro", "message_copy": "Hi"}],
         "channels": ["email"],
         "summary": "A short plan.",
-        # No email_verification key at all -- the model didn't call the tool.
     }
-    with patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-abc")):
+    with (
+        patch("app.agents.outreach_planner.run_agent_reasoning", return_value=(mocked_response, "session-abc")),
+        patch("app.agents.outreach_planner.get_tool_call_results", return_value=[]),
+    ):
         result = run_outreach_planner(db_session, sample_lead, "mid", 0.7, {"fit": "full_fit"}, persona, solution)
 
     assert result["verified_email"] is None

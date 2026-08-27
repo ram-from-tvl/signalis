@@ -145,8 +145,9 @@ def test_additive_columns_list_is_nonempty():
 
 
 def test_additive_columns_includes_outreach_plan_email_verification_fields():
-    """Regression test: the two new outreach_plans columns for Hunter.io
+    """Regression test: the three new outreach_plans columns for Hunter.io
     email-verification results must be declared, or a legacy DB created
     before this feature would never gain them."""
     assert ("outreach_plans", "verified_email", "VARCHAR") in _ADDITIVE_COLUMNS
     assert ("outreach_plans", "email_verification_status", "VARCHAR") in _ADDITIVE_COLUMNS
+    assert ("outreach_plans", "email_verification_reason", "VARCHAR") in _ADDITIVE_COLUMNS

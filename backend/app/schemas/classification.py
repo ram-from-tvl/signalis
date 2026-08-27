@@ -31,8 +31,11 @@ class OutreachPlanOut(BaseModel):
     created_at: datetime.datetime
     approved_at: datetime.datetime | None = None
     approved_by: str | None = None
+    # Mirrors OutreachPlan (app/models/classification.py) — keep in sync,
+    # including the frontend OutreachPlan type (frontend/src/types/api.ts).
     verified_email: str | None = None
     email_verification_status: str | None = None
+    email_verification_reason: str | None = None
 
 
 class ApprovalActionRequest(BaseModel):

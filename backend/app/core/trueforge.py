@@ -392,6 +392,49 @@ def _extract_subagent_delegations(events: list[dict[str, Any]]) -> list[dict[str
     return delegations
 
 
+def get_tool_call_results(session_id: str, tool_names: set[str]) -> list[dict[str, Any]]:
+    """Pair up ``model.message`` tool-call events with their matching
+    ``tool.response`` events on a session's event stream, filtered to
+    ``tool_names``, and return each call's parsed response payload.
+
+    Same "prove it happened via TrueForge's own session data" method as
+    `_extract_subagent_delegations`, applied to any named tool: a tool
+    result is only trusted if it shows up as a real tool_call/tool.response
+    pair TrueForge itself recorded, not because the model's final answer
+    claims it called the tool. Raises TrueForgeError if the events fetch
+    itself fails — callers decide how to treat that (see `run_turn`'s
+    `with_delegations` sentinel pattern for the precedent).
+    """
+    events = _get_session_events(session_id)
+
+    call_names: dict[str, str] = {}
+    for item in events:
+        event = item.get("event", {})
+        for call in event.get("tool_calls", []) or []:
+            function = call.get("function", {})
+            name = function.get("name")
+            call_id = call.get("id")
+            if name in tool_names and call_id:
+                call_names[call_id] = name
+
+    results: list[dict[str, Any]] = []
+    for item in events:
+        event = item.get("event", {})
+        if event.get("type") != "tool.response":
+            continue
+        call_id = event.get("tool_call_id")
+        name = call_names.get(call_id)
+        if name is None:
+            continue
+        content = event.get("content", "")
+        try:
+            parsed = json.loads(content) if isinstance(content, str) else content
+        except json.JSONDecodeError:
+            parsed = {"raw_content": content}
+        results.append({"tool_name": name, "tool_call_id": call_id, "result": parsed})
+    return results
+
+
 def run_turn(
     agent_name: str, message: str, *, with_delegations: bool = False
 ) -> (

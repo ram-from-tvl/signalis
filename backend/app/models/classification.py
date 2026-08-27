@@ -58,10 +58,19 @@ class OutreachPlan(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
     approved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     approved_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    # verified_email/email_verification_status/email_verification_reason are
+    # mirrored (not derived) on OutreachPlanOut (app/schemas/classification.py)
+    # and the frontend OutreachPlan type (frontend/src/types/api.ts) — keep
+    # all three in sync when changing any of them.
     verified_email: Mapped[str | None] = mapped_column(String, nullable=True)
     email_verification_status: Mapped[str | None] = mapped_column(String, nullable=True)
     # Hunter.io's status ("valid"/"invalid"/"accept_all"/"unknown"), or
     # "unverified" when the tool wasn't queried (e.g. no HUNTER_API_KEY).
+    email_verification_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Hunter's own failure reason (e.g. "HUNTER_API_KEY is not configured",
+    # "Hunter request failed: ...") when status is "verification_failed";
+    # None otherwise. Distinct from the generic status so a rep/dev can see
+    # *why* verification didn't produce a result instead of just that it didn't.
 
     lead: Mapped["Lead"] = relationship(back_populates="outreach_plans")
 

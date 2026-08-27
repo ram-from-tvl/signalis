@@ -84,8 +84,9 @@ def search_company_semantic(company_name: str, focus: str | None = None) -> dict
             json={
                 "query": query,
                 "numResults": _MAX_RESULTS,
-                "type": "neural",
+                "type": "auto",
                 "category": "company",
+                "contents": {"text": {"maxCharacters": 500}},
             },
             timeout=_REQUEST_TIMEOUT_SECONDS,
         )

@@ -157,6 +157,7 @@ def run_pipeline_for_lead(db: Session, lead: Lead) -> dict[str, Any]:
         status="pending_approval",
         verified_email=plan_result.get("verified_email"),
         email_verification_status=plan_result.get("email_verification_status"),
+        email_verification_reason=plan_result.get("email_verification_reason"),
     )
     db.add(plan)
     db.commit()

@@ -102,6 +102,7 @@ def test_pipeline_persists_email_verification_onto_outreach_plan(db_session, sam
                 "summary": "plan",
                 "verified_email": "jane@acme.com",
                 "email_verification_status": "valid",
+                "email_verification_reason": None,
             },
             "explainability_result": {"narrative": "narrative", "agent_order": []},
         }
@@ -112,6 +113,7 @@ def test_pipeline_persists_email_verification_onto_outreach_plan(db_session, sam
 
     assert outcome["plan"].verified_email == "jane@acme.com"
     assert outcome["plan"].email_verification_status == "valid"
+    assert outcome["plan"].email_verification_reason is None
 
 
 def test_rerunning_pipeline_supersedes_prior_classification(db_session, sample_lead):

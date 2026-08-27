@@ -6,7 +6,8 @@ is still no migration framework in this build: new tables are created via
 `Base.metadata.create_all`, sufficient for every schema change so far except
 nullable columns added to an already-existing table
 (`agent_runs.trueforge_session_id`, `outreach_plans.verified_email`,
-`outreach_plans.email_verification_status`), which `create_all` does not
+`outreach_plans.email_verification_status`,
+`outreach_plans.email_verification_reason`), which `create_all` does not
 retrofit onto existing rows. Those cases are handled by a small, purpose-built
 additive-only patcher, `app/db/migrations.py::run_startup_migrations`, run
 right after `create_all` on every startup: it inspects each table's current
@@ -189,8 +190,9 @@ except by an explicit approve/reject/edit action.
 | created_at | datetime | |
 | approved_at | datetime, nullable | |
 | approved_by | string, nullable | |
-| verified_email | string, nullable | the email Hunter.io verified or found, if the Outreach Planner's `verify_email`/`find_email` tools were queried for this plan |
-| email_verification_status | string, nullable | Hunter.io's status (`valid`/`invalid`/`accept_all`/`unknown`), or `unverified` when the tool wasn't queried (e.g. no `HUNTER_API_KEY` configured) |
+| verified_email | string, nullable | the email Hunter.io verified or found, if `verify_email` was genuinely called for this plan |
+| email_verification_status | string, nullable | `valid`/`invalid`/`accept_all`/`unknown` (Hunter's own statuses, confirmed via TrueForge's session events, never taken from the model's self-report — see docs/DECISIONS.md), or `unverified` (never queried) / `verification_failed` (queried but Hunter/the tool itself failed) / `evidence_unavailable` (couldn't confirm whether the tool ran) |
+| email_verification_reason | string, nullable | Hunter's own failure reason (e.g. "HUNTER_API_KEY is not configured") when `email_verification_status` is `verification_failed`; null in every other case |
 
 Every newly generated plan starts as `pending_approval`, regardless of the
 confidence of the classification it is based on — this is the mandatory

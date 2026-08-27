@@ -22,6 +22,7 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("agent_runs", "trueforge_session_id", "VARCHAR"),
     ("outreach_plans", "verified_email", "VARCHAR"),
     ("outreach_plans", "email_verification_status", "VARCHAR"),
+    ("outreach_plans", "email_verification_reason", "VARCHAR"),
 ]
 
 
