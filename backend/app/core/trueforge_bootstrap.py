@@ -43,7 +43,7 @@ def main() -> None:
                     "type": "google-gemini",
                     "auth": {"api_key": settings.gemini_api_key},
                     "models": [
-                        {"model_id": settings.gemini_model, "name": "gemini-2-5-flash", "properties": {}}
+                        {"model_id": settings.gemini_model, "name": "gemini-3-6-flash", "properties": {}}
                     ],
                 }
             },

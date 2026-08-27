@@ -1,11 +1,13 @@
-"""Real end-to-end Gemini integration test.
+"""Real end-to-end direct-LLM integration test.
 
 Unlike the rest of the suite, this makes a genuine network call to the
 configured model to prove the agent reasoning is real, not mocked. Skipped
 automatically when no API key is configured (e.g. in CI without secrets).
 TrueForge is disabled for this test specifically so it exercises the direct
-Gemini call path deterministically, independent of whether a TrueForge
-sidecar happens to be running.
+generate_json call path deterministically, independent of whether a
+TrueForge sidecar happens to be running — this hits Hugging Face first
+(the primary provider) and falls back to Gemini only if HF fails, same
+priority order as generate_json everywhere else.
 """
 from __future__ import annotations
 
@@ -19,8 +21,11 @@ settings = get_settings()
 
 
 @pytest.mark.integration
-@pytest.mark.skipif(not settings.gemini_api_key, reason="GEMINI_API_KEY not configured")
-def test_persona_fit_agent_real_gemini_call(db_session, sample_lead):
+@pytest.mark.skipif(
+    not (settings.hf_tokens or settings.gemini_api_keys),
+    reason="Neither HF_TOKEN nor GEMINI_API_KEY is configured",
+)
+def test_persona_fit_agent_real_llm_call(db_session, sample_lead):
     original_trueforge_enabled = settings.trueforge_enabled
     settings.trueforge_enabled = False
     try:

@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: str = ""
     gemini_api_key_1: str = ""
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.6-flash"
     hf_token: str = ""
     hf_token_1: str = ""
     hf_token_2: str = ""
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     trueforge_model: str = "huggingface/qwen3-4b"
     trueforge_model_1: str = "huggingface-2/qwen3-4b"
     trueforge_model_2: str = "huggingface-3/qwen3-4b"
-    trueforge_model_fallback: str = "google-gemini/gemini-2-5-flash"
+    trueforge_model_fallback: str = "google-gemini/gemini-3-6-flash"
     database_url: str = f"sqlite:///{BACKEND_DIR / 'signalis.db'}"
 
     # Below this confidence, a stage classification requires human approval

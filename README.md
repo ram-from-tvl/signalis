@@ -65,17 +65,23 @@ lead — updating its understanding automatically whenever new signals arrive.
   in-process business logic, with a local fallback computation if the
   sandbox is briefly unreachable. Which path actually ran is recorded on
   every buying-stage agent run.
-- **LLM providers**: Google Gemini (`gemini-2.5-flash` by default,
-  configurable via `GEMINI_MODEL`) is the primary model, registered with
-  TrueForge as a native `google-gemini` provider. If TrueForge itself is not
-  running, or a turn fails after retries, the same call falls back to a
-  direct Gemini call and then to a Hugging Face Inference Providers model
-  (`Qwen/Qwen3-4B-Instruct-2507` by default, configurable via `HF_MODEL`)
-  using OpenAI-compatible tool calling — so the pipeline still produces real
-  model reasoning even if the TrueForge sidecar or the primary provider is
-  briefly unavailable. No agent's reasoning is hardcoded or templated at any
-  layer of this fallback chain — every classification, fit assessment, plan,
-  and narrative is a real model call over real data.
+- **LLM providers**: Hugging Face Inference Providers (`Qwen/Qwen3-4B-Instruct-2507`
+  by default, configurable via `HF_MODEL`) is the primary model, registered
+  with TrueForge as a `custom` OpenAI-compatible provider. Up to three HF API
+  keys can be configured (`HF_TOKEN`, `HF_TOKEN_1`, `HF_TOKEN_2`), each
+  registered with TrueForge as its own named provider; a quota/auth failure
+  (402/429/401/403) on one key rotates to the next before falling back
+  further. Google Gemini (`gemini-3.6-flash` by default, configurable via
+  `GEMINI_MODEL`) is registered as the final fallback provider (also
+  supporting up to two keys via `GEMINI_API_KEY`/`GEMINI_API_KEY_1`, with the
+  same rotation). If every TrueForge-registered provider/key fails, or
+  TrueForge itself is not running, the same call falls back to a direct HF
+  call (with the same key rotation) and then a direct Gemini call — so the
+  pipeline still produces real model reasoning even if the TrueForge sidecar
+  or every registered provider is briefly unavailable. No agent's reasoning
+  is hardcoded or templated at any layer of this fallback chain — every
+  classification, fit assessment, plan, and narrative is a real model call
+  over real data.
 - **Human approval**: every generated outreach plan, and any stage
   classification the model itself was unconfident about, is persisted as
   `pending_approval` and requires an explicit approve/reject action through
@@ -121,9 +127,10 @@ backend/
     api/routes/    FastAPI routers, one module per resource (including
                    tool_approvals.py and agent_followups.py)
     api/router.py  aggregates every router; app.main only mounts this one
-    core/          config, the TrueForge HTTP client, the Gemini/HF LLM
-                   fallback, the Daytona sandbox wrapper, and the one-time
-                   TrueForge provider bootstrap script (trueforge_bootstrap.py)
+    core/          config, the TrueForge HTTP client, the HF/Gemini LLM
+                   fallback (with multi-key rotation), the Daytona sandbox
+                   wrapper, and the one-time TrueForge provider bootstrap
+                   script (trueforge_bootstrap.py)
     mcp_tools/     the four remote MCP servers: firmographic enrichment,
                    Tavily and Exa web research, and Hunter.io email tools
     db/            SQLAlchemy session/base, demo data seeding, and
@@ -133,7 +140,7 @@ backend/
     schemas/       Pydantic request/response schemas, one module per domain
     services/      ingestion + pipeline orchestration services
   data/            bundled sample CRM CSV and website events JSON
-  tests/           pytest suite (unit, API, one real-Gemini integration test)
+  tests/           pytest suite (unit, API, one real-LLM integration test)
 frontend/
   src/
     api/           typed API client
@@ -154,24 +161,31 @@ CHANGELOG.md       notable changes, in Keep a Changelog format
 ### Prerequisites
 - Python 3.11+
 - Node.js 22+ and npm (required by the TrueForge agent harness)
-- A Gemini API key (https://ai.google.dev)
-- Optional: a Hugging Face access token (https://huggingface.co/settings/tokens)
-  for the LLM fallback, and a Daytona API key + sandbox (https://app.daytona.io)
-  for sandboxed signal scoring. Both are genuinely optional — everything
-  still runs correctly without them, just with less redundancy.
+- A Hugging Face access token (https://huggingface.co/settings/tokens) — the
+  primary LLM provider
+- Optional: a Gemini API key (https://ai.google.dev) as a fallback provider,
+  and a Daytona API key + sandbox (https://app.daytona.io) for sandboxed
+  signal scoring. Both are genuinely optional — everything still runs
+  correctly without them, just with less redundancy.
 
 ### 1. Configure environment variables
 
 Create a `.env` file at the repository root (not inside `backend/`):
 
 ```
-GEMINI_API_KEY=your-key-here
-GEMINI_MODEL=gemini-2.5-flash
-DATABASE_URL=sqlite:///signalis.db
-
-# Optional: used only if Gemini is unavailable or a request fails
 HF_TOKEN=your-hugging-face-token
 HF_MODEL=Qwen/Qwen3-4B-Instruct-2507:nscale
+# Optional: up to two more HF keys — a 402/429/401/403 on one rotates to
+# the next before falling back to Gemini
+HF_TOKEN_1=your-second-hugging-face-token
+HF_TOKEN_2=your-third-hugging-face-token
+DATABASE_URL=sqlite:///signalis.db
+
+# Optional: used only if every HF key is unavailable or a request fails
+GEMINI_API_KEY=your-key-here
+GEMINI_MODEL=gemini-3.6-flash
+# Optional: a second Gemini key, tried if the first one's quota is exhausted
+GEMINI_API_KEY_1=your-second-key-here
 
 # Optional: used only for sandboxed signal-scoring execution; falls back to
 # an equivalent local computation if unset or unreachable
@@ -195,10 +209,10 @@ EXA_API_KEY=your-exa-api-key
 HUNTER_API_KEY=your-hunter-api-key
 
 # Optional: point at a different local TrueForge instance, or set
-# TRUEFORGE_ENABLED=false to skip the harness and call Gemini/HF directly
+# TRUEFORGE_ENABLED=false to skip the harness and call HF/Gemini directly
 TRUEFORGE_URL=http://localhost:8790
 TRUEFORGE_ENABLED=true
-TRUEFORGE_MODEL=google-gemini/gemini-2-5-flash
+TRUEFORGE_MODEL=huggingface/qwen3-4b
 ```
 
 ### 2. Start the TrueForge agent harness
@@ -378,8 +392,8 @@ The app is served at `http://localhost:5173`.
 ```bash
 cd backend
 source venv/bin/activate
-pytest -m "not integration" -q      # fast unit + API tests, Gemini calls mocked
-pytest -m integration -q            # real end-to-end Gemini call (needs GEMINI_API_KEY)
+pytest -m "not integration" -q      # fast unit + API tests, LLM calls mocked
+pytest -m integration -q            # real end-to-end LLM call (needs HF_TOKEN or GEMINI_API_KEY)
 ```
 
 ## Linting

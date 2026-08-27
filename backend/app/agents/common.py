@@ -8,16 +8,44 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import threading
+from collections import defaultdict
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.llm import LLMError, generate_json
-from app.core.trueforge import PendingToolApproval, TrueForgeError, ensure_agent, resume_turn, run_turn
+from app.core.trueforge import (
+    PendingToolApproval,
+    TrueForgeError,
+    TrueForgeTurnExecutedError,
+    ensure_agent,
+    resume_turn,
+    run_turn,
+)
 from app.models import AgentRun
 
 logger = logging.getLogger("signalis.agents")
+
+# TrueForge agents are registered under fixed, shared names (e.g.
+# "signalis-persona-fit"), not per-request/per-lead identities. Model
+# rotation makes ensure_agent(model=candidate) -> run_turn(...) a genuine
+# two-step, retryable sequence against that shared name, so two concurrent
+# requests for the same agent could otherwise interleave: request A's
+# ensure_agent(model=B) could be immediately followed by request B's
+# ensure_agent(model=A) before A's run_turn fires, making A silently run on
+# B's model. A per-agent-name lock serializes ensure_agent+run_turn for a
+# given agent within this single-process deployment (no multi-worker
+# uvicorn, no external process pool — see README), which is sufficient to
+# close the race for how this app actually runs.
+_agent_locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
+_agent_locks_guard = threading.Lock()
+
+
+def _lock_for_agent(agent_name: str) -> threading.Lock:
+    with _agent_locks_guard:
+        return _agent_locks[agent_name]
 
 
 class AgentPausedForToolApproval(Exception):
@@ -125,21 +153,40 @@ def run_agent_reasoning(
         last_trueforge_error: TrueForgeError | None = None
         for candidate_model in _trueforge_models_to_try(model):
             try:
-                ensure_agent(
-                    trueforge_agent_name,
-                    model=candidate_model,
-                    instructions=(
-                        f"{system_instruction}\n\nRespond with a single JSON object matching this "
-                        f"JSON schema exactly, and nothing else: {json.dumps(response_schema)}"
-                    ),
-                    mcp_servers=mcp_servers,
-                    skills=skills,
-                )
-                result, session_id = run_turn(trueforge_agent_name, prompt)
+                with _lock_for_agent(trueforge_agent_name):
+                    ensure_agent(
+                        trueforge_agent_name,
+                        model=candidate_model,
+                        instructions=(
+                            f"{system_instruction}\n\nRespond with a single JSON object matching this "
+                            f"JSON schema exactly, and nothing else: {json.dumps(response_schema)}"
+                        ),
+                        mcp_servers=mcp_servers,
+                        skills=skills,
+                    )
+                    result, session_id = run_turn(trueforge_agent_name, prompt)
                 if isinstance(result, list):
                     raise AgentPausedForToolApproval(result)
                 return result, session_id
+            except TrueForgeTurnExecutedError as exc:
+                # The turn genuinely ran (model reasoning + any real MCP tool
+                # calls already executed) before failing at output
+                # resolution — retrying on a different model would re-run
+                # those side effects, so stop rotating and fall through to
+                # the direct-LLM path below exactly as before this feature.
+                last_trueforge_error = exc
+                logger.warning(
+                    "TrueForge turn for %s executed but failed to resolve on model %s; "
+                    "not rotating models (would repeat side effects), falling back to direct LLM call: %s",
+                    trueforge_agent_name,
+                    candidate_model,
+                    exc,
+                )
+                break
             except TrueForgeError as exc:
+                # A pre-execution failure (agent registration, session/turn
+                # creation, or poll transport) — nothing ran, so it's safe
+                # to try the next configured model.
                 last_trueforge_error = exc
                 logger.warning(
                     "TrueForge call failed for %s on model %s, trying next configured model: %s",
@@ -147,11 +194,12 @@ def run_agent_reasoning(
                     candidate_model,
                     exc,
                 )
-        logger.warning(
-            "TrueForge call failed for %s on every configured model, falling back to direct LLM call: %s",
-            trueforge_agent_name,
-            last_trueforge_error,
-        )
+        else:
+            logger.warning(
+                "TrueForge call failed for %s on every configured model, falling back to direct LLM call: %s",
+                trueforge_agent_name,
+                last_trueforge_error,
+            )
 
     fallback_instruction = system_instruction
     if mcp_servers:
@@ -210,16 +258,32 @@ def run_agent_reasoning_with_delegations(
         last_trueforge_error: TrueForgeError | None = None
         for candidate_model in _trueforge_models_to_try(model):
             try:
-                ensure_agent(
-                    trueforge_agent_name,
-                    model=candidate_model,
-                    instructions=(
-                        f"{system_instruction}\n\nRespond with a single JSON object matching this "
-                        f"JSON schema exactly, and nothing else: {json.dumps(response_schema)}"
-                    ),
-                )
-                output, _session_id, delegations = run_turn(trueforge_agent_name, prompt, with_delegations=True)
+                with _lock_for_agent(trueforge_agent_name):
+                    ensure_agent(
+                        trueforge_agent_name,
+                        model=candidate_model,
+                        instructions=(
+                            f"{system_instruction}\n\nRespond with a single JSON object matching this "
+                            f"JSON schema exactly, and nothing else: {json.dumps(response_schema)}"
+                        ),
+                    )
+                    output, _session_id, delegations = run_turn(trueforge_agent_name, prompt, with_delegations=True)
                 return output, delegations, True
+            except TrueForgeTurnExecutedError as exc:
+                # The turn (and any subagent delegations it fanned out to)
+                # already ran — rotating to another model would re-run that
+                # fan-out, so stop here and fall through to the direct-LLM
+                # path exactly as before this feature.
+                last_trueforge_error = exc
+                logger.warning(
+                    "TrueForge turn for %s executed but failed to resolve on model %s; "
+                    "not rotating models (would repeat side effects), falling back to direct LLM call "
+                    "(subagent delegation unavailable on the fallback path): %s",
+                    trueforge_agent_name,
+                    candidate_model,
+                    exc,
+                )
+                break
             except TrueForgeError as exc:
                 last_trueforge_error = exc
                 logger.warning(
@@ -228,12 +292,13 @@ def run_agent_reasoning_with_delegations(
                     candidate_model,
                     exc,
                 )
-        logger.warning(
-            "TrueForge call failed for %s on every configured model, falling back to direct LLM call "
-            "(subagent delegation unavailable on the fallback path): %s",
-            trueforge_agent_name,
-            last_trueforge_error,
-        )
+        else:
+            logger.warning(
+                "TrueForge call failed for %s on every configured model, falling back to direct LLM call "
+                "(subagent delegation unavailable on the fallback path): %s",
+                trueforge_agent_name,
+                last_trueforge_error,
+            )
 
     effective_instruction = fallback_instruction if fallback_instruction is not None else system_instruction
     try:

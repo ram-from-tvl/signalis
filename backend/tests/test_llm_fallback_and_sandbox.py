@@ -18,6 +18,7 @@ from app.core.sandbox import run_signal_scoring
 from app.core.trueforge import (
     PendingToolApproval,
     TrueForgeError,
+    TrueForgeTurnExecutedError,
     _extract_subagent_delegations,
     _get_session_events,
     ensure_agent,
@@ -121,6 +122,54 @@ def test_call_gemini_json_rotates_to_next_key_on_quota_error():
 
     assert result == {"stage": "mid", "confidence": 0.5}
     assert call_count["n"] == 2
+
+
+def test_get_client_caches_per_key_not_globally():
+    """Regression test for the Qodo finding: a single process-global client
+    cache would silently keep serving whichever key last built it, so a
+    rotation loop retrying key 1 after key 2 succeeded would actually reuse
+    key 2's client and never really retry key 1. Each distinct key must get
+    its own cached client."""
+    import app.core.llm as llm_module
+
+    llm_module._clients.clear()
+    client_1 = llm_module._get_client("key-1")
+    client_2 = llm_module._get_client("key-2")
+    client_1_again = llm_module._get_client("key-1")
+
+    assert client_1 is not client_2
+    assert client_1 is client_1_again
+
+
+def test_call_gemini_json_uses_correct_client_per_key_after_rotation():
+    """End-to-end regression test for the same finding at the
+    _call_gemini_json_with_key boundary: after rotating past key-1 to
+    key-2, a subsequent call that starts again at key-1 must genuinely
+    invoke the genai.Client for key-1, not silently reuse key-2's client."""
+    import app.core.llm as llm_module
+
+    llm_module._clients.clear()
+    constructed_with = []
+
+    class FakeClient:
+        def __init__(self, api_key):
+            constructed_with.append(api_key)
+            self.api_key = api_key
+
+        class models:
+            @staticmethod
+            def generate_content(**kwargs):
+                raise RuntimeError("not used in this test")
+
+    with patch("app.core.llm.genai.Client", side_effect=FakeClient):
+        client_a = llm_module._get_client("key-1")
+        client_b = llm_module._get_client("key-2")
+        client_a_again = llm_module._get_client("key-1")
+
+    assert constructed_with == ["key-1", "key-2"]  # only one construction per distinct key
+    assert client_a.api_key == "key-1"
+    assert client_b.api_key == "key-2"
+    assert client_a_again is client_a
 
 
 def test_hf_json_parses_tool_call_arguments():
@@ -591,6 +640,126 @@ def test_run_agent_reasoning_uses_trueforge_when_available():
     assert session_id == "session-abc123"
     mock_ensure.assert_called_once()
     mock_turn.assert_called_once()
+
+
+def test_run_agent_reasoning_does_not_rotate_models_after_turn_executed():
+    """Regression test for the Qodo finding: a TrueForgeTurnExecutedError
+    means the turn genuinely ran (model reasoning + any real MCP tool calls
+    already happened) before failing at output resolution. Retrying on a
+    different model would silently repeat those side effects (e.g. a second
+    Hunter.io lookup), so model rotation must stop immediately and fall
+    through to the direct-LLM path, not try the next configured model."""
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch("app.agents.common.ensure_agent") as mock_ensure, \
+         patch(
+             "app.agents.common.run_turn",
+             side_effect=TrueForgeTurnExecutedError("turn ran but returned non-JSON output"),
+         ) as mock_turn, \
+         patch("app.agents.common.generate_json", return_value={"stage": "mid", "confidence": 0.4}) as mock_generate:
+        mock_settings.return_value.trueforge_enabled = True
+        mock_settings.return_value.trueforge_models = ["huggingface/qwen3-4b", "huggingface-2/qwen3-4b"]
+        result, session_id = run_agent_reasoning(
+            trueforge_agent_name="signalis-buying-stage-orchestrator",
+            model="huggingface/qwen3-4b",
+            system_instruction="reason about stage",
+            prompt="lead data",
+            response_schema=SCHEMA,
+        )
+
+    assert result == {"stage": "mid", "confidence": 0.4}
+    assert session_id is None
+    # Exactly one attempt — must NOT have rotated to the second configured model.
+    mock_ensure.assert_called_once()
+    mock_turn.assert_called_once()
+    mock_generate.assert_called_once()
+
+
+def test_run_agent_reasoning_does_rotate_models_on_pre_execution_failure():
+    """Contrast case: a plain TrueForgeError (e.g. agent registration or
+    session/turn creation failed — nothing executed yet) is safe to retry
+    on the next configured model, unlike TrueForgeTurnExecutedError above."""
+    with patch("app.agents.common.get_settings") as mock_settings, \
+         patch(
+             "app.agents.common.ensure_agent",
+             side_effect=[TrueForgeError("registration transport failed"), None],
+         ) as mock_ensure, \
+         patch(
+             "app.agents.common.run_turn",
+             return_value=({"stage": "late", "confidence": 0.9}, "session-xyz"),
+         ) as mock_turn:
+        mock_settings.return_value.trueforge_enabled = True
+        mock_settings.return_value.trueforge_models = ["huggingface/qwen3-4b", "huggingface-2/qwen3-4b"]
+        result, session_id = run_agent_reasoning(
+            trueforge_agent_name="signalis-buying-stage-orchestrator",
+            model="huggingface/qwen3-4b",
+            system_instruction="reason about stage",
+            prompt="lead data",
+            response_schema=SCHEMA,
+        )
+
+    assert result == {"stage": "late", "confidence": 0.9}
+    assert session_id == "session-xyz"
+    assert mock_ensure.call_count == 2
+    mock_turn.assert_called_once()
+
+
+def test_run_agent_reasoning_serializes_ensure_agent_and_run_turn_per_agent_name():
+    """Regression test for the Qodo finding: ensure_agent(model=candidate)
+    followed by run_turn is a two-step sequence against a shared, fixed
+    agent name. Without a per-agent lock, two concurrent calls for the same
+    agent name could interleave their ensure_agent/run_turn pairs, so one
+    request's turn could silently run on the other request's model. This
+    verifies ensure_agent and run_turn for the same agent name are never
+    interleaved with another concurrent call for that same name."""
+    import threading
+    import time
+
+    from app.agents.common import _agent_locks
+
+    _agent_locks.clear()
+    call_log: list[str] = []
+    log_lock = threading.Lock()
+
+    def fake_ensure_agent(name, **kwargs):
+        with log_lock:
+            call_log.append(f"ensure:{kwargs['model']}")
+        time.sleep(0.02)  # widen the window so a real race would be caught
+
+    def fake_run_turn(name, prompt, **kwargs):
+        with log_lock:
+            call_log.append("run_turn")
+        return {"stage": "late", "confidence": 0.9}, "session-1"
+
+    def call_with_model(model):
+        with patch("app.agents.common.get_settings") as mock_settings:
+            mock_settings.return_value.trueforge_enabled = True
+            mock_settings.return_value.trueforge_models = [model]
+            run_agent_reasoning(
+                trueforge_agent_name="signalis-persona-fit",
+                model=model,
+                system_instruction="assess fit",
+                prompt="lead data",
+                response_schema=SCHEMA,
+            )
+
+    with patch("app.agents.common.ensure_agent", side_effect=fake_ensure_agent), \
+         patch("app.agents.common.run_turn", side_effect=fake_run_turn):
+        threads = [
+            threading.Thread(target=call_with_model, args=(f"model-{i}",)) for i in range(5)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+    # Every ensure_agent call must be immediately followed by its own
+    # run_turn call — never two ensure_agent calls back-to-back, which
+    # would mean two requests' registrations interleaved before either
+    # ran its turn.
+    assert len(call_log) == 10
+    for i in range(0, 10, 2):
+        assert call_log[i].startswith("ensure:")
+        assert call_log[i + 1] == "run_turn"
 
 
 def test_ensure_agent_updates_manifest_when_agent_already_exists():

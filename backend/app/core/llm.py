@@ -76,14 +76,19 @@ class LLMError(RuntimeError):
     """Raised when every configured LLM provider fails or returns unparsable output."""
 
 
-_client: genai.Client | None = None
+_clients: dict[str, genai.Client] = {}
 
 
 def _get_client(api_key: str) -> genai.Client:
-    global _client
-    if _client is None:
-        _client = genai.Client(api_key=api_key)
-    return _client
+    """One cached client per distinct API key, not a single process-global
+    client — a single cache slot would silently keep serving whichever key
+    last built it, so a rotation loop retrying "key 1" after key 2 succeeded
+    would actually reuse key 2's client and never really retry key 1."""
+    client = _clients.get(api_key)
+    if client is None:
+        client = genai.Client(api_key=api_key)
+        _clients[api_key] = client
+    return client
 
 
 def _call_gemini_json_with_key(
@@ -148,8 +153,6 @@ def _call_gemini_json(
             quota_or_auth = "RESOURCE_EXHAUSTED" in str(exc) or "PERMISSION_DENIED" in str(exc) or "UNAUTHENTICATED" in str(exc)
             if not quota_or_auth:
                 raise
-            global _client
-            _client = None  # next key needs a fresh client
     raise last_error
 
 
@@ -363,8 +366,6 @@ def _call_gemini_text(system_instruction: str, prompt: str, temperature: float) 
             last_error = exc
             if not _is_quota_or_auth_error(exc) and "RESOURCE_EXHAUSTED" not in str(exc):
                 raise
-            global _client
-            _client = None
     raise last_error
 
 
