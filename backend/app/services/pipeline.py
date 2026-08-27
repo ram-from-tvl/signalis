@@ -155,6 +155,8 @@ def run_pipeline_for_lead(db: Session, lead: Lead) -> dict[str, Any]:
         channels=plan_result.get("channels", []),
         messaging_examples=[t.get("message_copy", "") for t in plan_result.get("touchpoints", [])],
         status="pending_approval",
+        verified_email=plan_result.get("verified_email"),
+        email_verification_status=plan_result.get("email_verification_status"),
     )
     db.add(plan)
     db.commit()

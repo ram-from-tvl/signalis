@@ -4,16 +4,17 @@ Signalis persists all state in a single SQLite database (`backend/signalis.db`),
 created automatically from the SQLAlchemy models on application startup. There
 is still no migration framework in this build: new tables are created via
 `Base.metadata.create_all`, sufficient for every schema change so far except
-one — a nullable column added to an already-existing table
-(`agent_runs.trueforge_session_id`), which `create_all` does not retrofit
-onto existing rows. That one case is handled by a small, purpose-built
+nullable columns added to an already-existing table
+(`agent_runs.trueforge_session_id`, `outreach_plans.verified_email`,
+`outreach_plans.email_verification_status`), which `create_all` does not
+retrofit onto existing rows. Those cases are handled by a small, purpose-built
 additive-only patcher, `app/db/migrations.py::run_startup_migrations`, run
 right after `create_all` on every startup: it inspects each table's current
 columns and issues `ALTER TABLE ... ADD COLUMN` only for ones genuinely
 missing, so it is a no-op on a fresh database (where `create_all` already
 created the column) and idempotent on repeated runs. This was judged the
-right scope for a single-column addition; see DECISIONS.md for why Alembic
-was not pulled in for it. Tables that represent a decision the system
+right scope for a handful of nullable-column additions; see DECISIONS.md
+for why Alembic was not pulled in for it. Tables that represent a decision the system
 makes (stage classifications, outreach plans) are append-only history tables
 rather than rows that get overwritten in place, so the full reasoning history
 behind any current state is always inspectable.
@@ -188,6 +189,8 @@ except by an explicit approve/reject/edit action.
 | created_at | datetime | |
 | approved_at | datetime, nullable | |
 | approved_by | string, nullable | |
+| verified_email | string, nullable | the email Hunter.io verified or found, if the Outreach Planner's `verify_email`/`find_email` tools were queried for this plan |
+| email_verification_status | string, nullable | Hunter.io's status (`valid`/`invalid`/`accept_all`/`unknown`), or `unverified` when the tool wasn't queried (e.g. no `HUNTER_API_KEY` configured) |
 
 Every newly generated plan starts as `pending_approval`, regardless of the
 confidence of the classification it is based on — this is the mandatory

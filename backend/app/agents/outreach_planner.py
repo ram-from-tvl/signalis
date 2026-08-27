@@ -33,6 +33,16 @@ _STYLE_GUIDE_REPO_URL = "https://github.com/ram-from-tvl/signalis"
 _STYLE_GUIDE_REPO_PATH = "backend/app/agents/skills/outreach_copywriting_style_guide"
 _STYLE_GUIDE_REPO_REF = "main"
 
+# Attaches Hunter.io so the agent can check whether the lead's email is
+# actually deliverable before generating copy for it.
+_MCP_SERVERS = [
+    {
+        "name": "signalis-hunter",
+        "enable_tools": ["@all"],
+        "require_approval_for_tools": [],
+    },
+]
+
 # Task-mechanical only; copywriting craft guidance lives in the
 # outreach-copywriting-style-guide TrueForge skill instead.
 SYSTEM_INSTRUCTION = """You are the Outreach Planner Agent inside a B2B sales intelligence
@@ -46,6 +56,16 @@ Output requirements:
 - Weigh the lead's buying stage, confidence, persona fit, and target persona's seniority/role
   when choosing tone and directness: early-stage leads get educational, low-pressure touches;
   late-stage leads get direct, action-oriented touches (e.g. proposing a specific next call).
+
+Before finalizing message_copy, use the verify_email tool (and find_email if the lead's email is
+missing but you have a company domain to search) to check whether this lead's email is actually
+deliverable. If verify_email reports the address is invalid or undeliverable, say so plainly in
+the plan's summary field as a blocker a rep should resolve before sending outreach, rather than
+silently writing copy for an address that will bounce. Do not fabricate a verification result if
+the tool was not queried (e.g. no API key configured) — report the email's deliverability as
+unverified instead. Include your verification outcome in the email_verification field of your
+response: {"queried": true/false, "email": the address checked, "status": Hunter's status string
+if queried}.
 
 You have access to the "outreach-copywriting-style-guide" skill, which covers channel-appropriate
 tone, how to reference a buying signal without sounding surveillance-creepy, how to structure the
@@ -112,6 +132,7 @@ def run_outreach_planner(
     prompt = (
         f"Lead: {lead.name}, {lead.title or 'unknown title'} at {lead.company} "
         f"({lead.industry or 'unknown industry'}, {lead.company_size or 'unknown size'}).\n"
+        f"Lead email: {lead.email or '(missing)'}\n"
         f"Buying stage: {stage} (confidence {confidence:.2f}).\n"
         f"Persona fit: {persona_fit.get('fit', 'unknown')} — {persona_fit.get('reasoning', '')}\n"
         f"Target persona: {persona_desc}\n"
@@ -138,6 +159,14 @@ def run_outreach_planner(
             },
             "channels": {"type": "array", "items": {"type": "string"}},
             "summary": {"type": "string"},
+            "email_verification": {
+                "type": "object",
+                "properties": {
+                    "queried": {"type": "boolean"},
+                    "email": {"type": "string"},
+                    "status": {"type": "string"},
+                },
+            },
         },
         "required": ["touchpoints", "channels", "summary"],
     }
@@ -163,12 +192,21 @@ def run_outreach_planner(
             prompt=prompt,
             response_schema=schema,
             temperature=0.4,
+            mcp_servers=_MCP_SERVERS,
             skills=skills,
             fallback_style_guidance=CONDENSED_STYLE_GUIDANCE,
         )
     except LLMError as exc:
         finish_run(db, run, output={"error": str(exc)}, reasoning=str(exc), status="failed")
         raise
+
+    # Model-authored, like every other agent's structured output (not
+    # independently re-verified against TrueForge session events the way
+    # Prioritization's delegation evidence is — the worst case here is a
+    # conservative "unverified" report, not a false capability claim).
+    ev = result.get("email_verification") or {}
+    result["verified_email"] = ev.get("email")
+    result["email_verification_status"] = ev.get("status") if ev.get("queried") else "unverified"
 
     finish_run(db, run, output=result, reasoning=result.get("summary", ""), trueforge_session_id=session_id)
     return result

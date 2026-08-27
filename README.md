@@ -45,16 +45,21 @@ lead — updating its understanding automatically whenever new signals arrive.
   confidence score; what changed is that each *node* in that graph now
   delegates its reasoning to TrueForge instead of calling an LLM SDK
   directly.
-- **MCP tools**: the Persona Fit agent calls two real remote MCP servers.
+- **MCP tools**: four real remote MCP servers, all genuine tool calls
+  discovered and invoked through TrueForge's MCP layer, not function calls
+  embedded in an agent's own Python code, each served over HTTP.
   `app/mcp_tools/enrichment_server.py` exposes firmographic enrichment tools
   — `classify_company_industry` and `estimate_company_size_band`.
-  `app/mcp_tools/research_server.py` exposes `search_company_news`, which
-  calls the live Tavily search API (https://tavily.com) for recent news,
-  funding, and hiring signals about the lead's company, so the agent can
-  ground its reasoning in current external context rather than only the
-  static CRM/ingested data already in this app. Both are genuine tool calls
-  discovered and invoked through TrueForge's MCP layer, not function calls
-  embedded in the agent's own Python code, and both are served over HTTP.
+  `app/mcp_tools/research_server.py` exposes `search_company_news` via the
+  live Tavily search API (https://tavily.com). `app/mcp_tools/exa_server.py`
+  exposes `search_company_semantic` via Exa (https://exa.ai) — a
+  differently-sourced, semantic/company-focused search complementing
+  Tavily's broad web search. All three are attached to the Persona Fit
+  agent, which decides when a second or third read on external context
+  would sharpen its fit assessment. `app/mcp_tools/hunter_server.py`
+  exposes `find_email`/`verify_email` via Hunter.io (https://hunter.io),
+  attached to the Outreach Planner so a generated plan records whether the
+  lead's email is actually deliverable before a rep sends anything.
 - **Sandboxed execution**: the buying-stage signal-strength score is computed
   by running generated Python inside a Daytona sandbox rather than as
   in-process business logic, with a local fallback computation if the
@@ -119,8 +124,8 @@ backend/
     core/          config, the TrueForge HTTP client, the Gemini/HF LLM
                    fallback, the Daytona sandbox wrapper, and the one-time
                    TrueForge provider bootstrap script (trueforge_bootstrap.py)
-    mcp_tools/     the remote MCP servers: firmographic enrichment tools and
-                   the Tavily-backed live web-research tool
+    mcp_tools/     the four remote MCP servers: firmographic enrichment,
+                   Tavily and Exa web research, and Hunter.io email tools
     db/            SQLAlchemy session/base, demo data seeding, and
                    migrations.py (additive-only, for the one column added to
                    an already-existing table)
@@ -179,6 +184,16 @@ DAYTONA_SANDBOX_ID=your-sandbox-id
 # falls back to a "not queried" result if unset or the call fails
 TAVILY_API_KEY=your-tavily-api-key
 
+# Optional: used only by the Persona Fit agent's search_company_semantic MCP
+# tool (semantic/company-focused web search via https://exa.ai); falls back
+# to a "not queried" result if unset or the call fails
+EXA_API_KEY=your-exa-api-key
+
+# Optional: used only by the Outreach Planner agent's find_email/verify_email
+# MCP tools (email finding + verification via https://hunter.io); falls back
+# to a "not queried"/"unverified" result if unset or the call fails
+HUNTER_API_KEY=your-hunter-api-key
+
 # Optional: point at a different local TrueForge instance, or set
 # TRUEFORGE_ENABLED=false to skip the harness and call Gemini/HF directly
 TRUEFORGE_URL=http://localhost:8790
@@ -220,6 +235,32 @@ without `TAVILY_API_KEY` set (the tool returns a graceful "not queried"
 result instead of failing the agent turn), but genuinely calls the Tavily
 API only once that key is configured.
 
+### 3c. Start the Exa MCP server
+
+```bash
+cd backend
+source venv/bin/activate
+python -m app.mcp_tools.exa_server
+```
+
+This serves the `search_company_semantic` live web-research tool at
+`http://127.0.0.1:8793/mcp`. Leave it running in its own terminal. Same
+graceful fallback as the research server: works without `EXA_API_KEY` set,
+genuinely calls Exa only once that key is configured.
+
+### 3d. Start the Hunter.io MCP server
+
+```bash
+cd backend
+source venv/bin/activate
+python -m app.mcp_tools.hunter_server
+```
+
+This serves the `find_email`/`verify_email` tools at
+`http://127.0.0.1:8794/mcp`. Leave it running in its own terminal. Same
+graceful fallback: works without `HUNTER_API_KEY` set, genuinely calls
+Hunter.io only once that key is configured.
+
 ### 4. Backend
 
 ```bash
@@ -236,11 +277,11 @@ The API is now served at `http://localhost:8000`, with interactive docs at
 Individual TrueForge agents (one per Signalis agent) register themselves
 automatically the first time each one runs.
 
-If TrueForge or either MCP server is not running, every agent call still
-works — `app/agents/common.run_agent_reasoning` catches the transport
-failure and falls back to a direct Gemini/Hugging-Face call — but the MCP
-tool calls and the TrueForge-native agent loop will not be exercised in
-that case.
+If TrueForge or any of the four MCP servers is not running, every agent
+call still works — `app/agents/common.run_agent_reasoning` catches the
+transport failure and falls back to a direct Gemini/Hugging-Face call —
+but the MCP tool calls and the TrueForge-native agent loop will not be
+exercised in that case.
 
 ### 5. Load sample data (optional but recommended for a first run)
 
@@ -292,11 +333,14 @@ The app is served at `http://localhost:5173`.
   distinguished by agent, with its input summary and full reasoning text —
   this is real persisted data, inspectable after the fact, not a live-only
   view.
-- **Real MCP tool use**: With TrueForge and both MCP servers running (setup
-  steps 2, 3, 3b), any pipeline run's Persona Fit step genuinely discovers
-  and calls the `classify_company_industry` / `estimate_company_size_band`
-  tools, and — when recent external context would sharpen the fit
-  assessment — the `search_company_news` tool, over MCP. This is visible
+- **Real MCP tool use**: With TrueForge and all four MCP servers running
+  (setup steps 2, 3, 3b, 3c, 3d), any pipeline run's Persona Fit step
+  genuinely discovers and calls the `classify_company_industry` /
+  `estimate_company_size_band` tools, and — when recent external context
+  would sharpen the fit assessment — `search_company_news` (Tavily) and/or
+  `search_company_semantic` (Exa), over MCP. Separately, the Outreach
+  Planner genuinely calls `verify_email`/`find_email` (Hunter.io) to check
+  the lead's email is deliverable before finalizing copy. This is visible
   directly in TrueForge's own session events (`GET
   /api/v1/sessions/{id}/events` on the TrueForge harness, port 8790) as real
   `mcp.initialize` and tool-call events, not just in the agent's final

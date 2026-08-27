@@ -20,6 +20,8 @@ logger = logging.getLogger("signalis.db.migrations")
 # existing table instead of a new one.
 _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("agent_runs", "trueforge_session_id", "VARCHAR"),
+    ("outreach_plans", "verified_email", "VARCHAR"),
+    ("outreach_plans", "email_verification_status", "VARCHAR"),
 ]
 
 

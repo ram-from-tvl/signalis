@@ -58,6 +58,10 @@ class OutreachPlan(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
     approved_at: Mapped[datetime.datetime | None] = mapped_column(DateTime, nullable=True)
     approved_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    verified_email: Mapped[str | None] = mapped_column(String, nullable=True)
+    email_verification_status: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Hunter.io's status ("valid"/"invalid"/"accept_all"/"unknown"), or
+    # "unverified" when the tool wasn't queried (e.g. no HUNTER_API_KEY).
 
     lead: Mapped["Lead"] = relationship(back_populates="outreach_plans")
 

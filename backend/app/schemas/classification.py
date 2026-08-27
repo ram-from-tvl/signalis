@@ -31,6 +31,8 @@ class OutreachPlanOut(BaseModel):
     created_at: datetime.datetime
     approved_at: datetime.datetime | None = None
     approved_by: str | None = None
+    verified_email: str | None = None
+    email_verification_status: str | None = None
 
 
 class ApprovalActionRequest(BaseModel):

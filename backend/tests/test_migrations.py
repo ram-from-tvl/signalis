@@ -142,3 +142,11 @@ def test_additive_columns_list_is_nonempty():
     """Sanity check that this test file's premise (there is at least one
     additive column to migrate) still holds."""
     assert len(_ADDITIVE_COLUMNS) >= 1
+
+
+def test_additive_columns_includes_outreach_plan_email_verification_fields():
+    """Regression test: the two new outreach_plans columns for Hunter.io
+    email-verification results must be declared, or a legacy DB created
+    before this feature would never gain them."""
+    assert ("outreach_plans", "verified_email", "VARCHAR") in _ADDITIVE_COLUMNS
+    assert ("outreach_plans", "email_verification_status", "VARCHAR") in _ADDITIVE_COLUMNS

@@ -35,6 +35,11 @@ _MCP_SERVERS = [
         "enable_tools": ["@all"],
         "require_approval_for_tools": [],
     },
+    {
+        "name": "signalis-exa",
+        "enable_tools": ["@all"],
+        "require_approval_for_tools": [],
+    },
 ]
 
 SYSTEM_INSTRUCTION = """You are the Persona Fit Agent inside a B2B sales intelligence system.
@@ -46,7 +51,9 @@ search_company_news tool that returns real, current web results (recent news, fu
 signals) about the lead's company; call it when that kind of external context would meaningfully
 sharpen your fit assessment (for example, a recent funding round or hiring surge that speaks to
 company size or growth stage) — it is not mandatory on every lead, since recent news is not
-always relevant or available. Decide whether the lead is a full_fit, partial_fit, or mismatch
+always relevant or available. You also have search_company_semantic (Exa), a differently-sourced
+semantic/company-focused search; use it as a second read when Tavily's results are thin or
+ambiguous, not as a mandatory second call on every lead. Decide whether the lead is a full_fit, partial_fit, or mismatch
 against the persona and ICP, and explain your reasoning in plain, specific language a sales rep
 could sanity-check in five seconds. Always call out any lead fields that are missing or blank and
 explain how that limited your confidence in the assessment. Be honest about ambiguity rather than

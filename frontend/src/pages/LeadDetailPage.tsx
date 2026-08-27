@@ -424,19 +424,38 @@ export function LeadDetailPage() {
                     {latest_plan.channels.join(", ") || "No channels"} &middot; {latest_plan.touchpoints.length} touchpoint(s)
                   </CardDescription>
                 </div>
-                <Badge
-                  variant={
-                    latest_plan.status === "approved"
-                      ? "success"
-                      : latest_plan.status === "rejected"
-                        ? "destructive"
-                        : latest_plan.status === "superseded"
-                          ? "outline"
-                          : "warning"
-                  }
-                >
-                  {latest_plan.status.replace("_", " ")}
-                </Badge>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {latest_plan.email_verification_status && (
+                    <Badge
+                      variant={
+                        latest_plan.email_verification_status === "valid"
+                          ? "success"
+                          : latest_plan.email_verification_status === "unverified"
+                            ? "outline"
+                            : "destructive"
+                      }
+                    >
+                      {latest_plan.email_verification_status === "valid"
+                        ? "Email verified"
+                        : latest_plan.email_verification_status === "unverified"
+                          ? "Email unverified"
+                          : "Email invalid — will bounce"}
+                    </Badge>
+                  )}
+                  <Badge
+                    variant={
+                      latest_plan.status === "approved"
+                        ? "success"
+                        : latest_plan.status === "rejected"
+                          ? "destructive"
+                          : latest_plan.status === "superseded"
+                            ? "outline"
+                            : "warning"
+                    }
+                  >
+                    {latest_plan.status.replace("_", " ")}
+                  </Badge>
+                </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
                 <ol className="flex flex-col gap-3">

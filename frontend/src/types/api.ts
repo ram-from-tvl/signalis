@@ -99,6 +99,8 @@ export interface OutreachPlan {
   created_at: string
   approved_at: string | null
   approved_by: string | null
+  verified_email: string | null
+  email_verification_status: string | null
 }
 
 export interface AgentRun {

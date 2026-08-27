@@ -83,6 +83,37 @@ def test_high_confidence_is_auto_approved_but_plan_still_pending(db_session, sam
     assert outcome["plan"].status == "pending_approval"
 
 
+def test_pipeline_persists_email_verification_onto_outreach_plan(db_session, sample_lead):
+    """run_pipeline_for_lead must persist verified_email/email_verification_status
+    from the Outreach Planner's plan_result onto the created OutreachPlan row —
+    not silently drop the Hunter.io verification outcome."""
+    with patch("app.agents.graph.build_graph") as mock_build:
+        mock_graph = mock_build.return_value
+        mock_graph.invoke.return_value = {
+            "signal_extraction_result": {"classifications": [], "summary": "ok"},
+            "persona_fit_result": {"fit": "full_fit", "reasoning": "matches", "missing_data": []},
+            "stage_result": {"stage": "late", "confidence": 0.9, "justification": "strong signals"},
+            "requires_approval": False,
+            "plan_result": {
+                "touchpoints": [
+                    {"day_offset": 0, "channel": "email", "content_theme": "intro", "message_copy": "hi"}
+                ],
+                "channels": ["email"],
+                "summary": "plan",
+                "verified_email": "jane@acme.com",
+                "email_verification_status": "valid",
+            },
+            "explainability_result": {"narrative": "narrative", "agent_order": []},
+        }
+        import app.agents.graph as graph_module
+
+        graph_module._compiled_graph = None
+        outcome = run_pipeline_for_lead(db_session, sample_lead)
+
+    assert outcome["plan"].verified_email == "jane@acme.com"
+    assert outcome["plan"].email_verification_status == "valid"
+
+
 def test_rerunning_pipeline_supersedes_prior_classification(db_session, sample_lead):
     with patch("app.agents.graph.build_graph") as mock_build:
         mock_graph = mock_build.return_value
