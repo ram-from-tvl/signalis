@@ -5,10 +5,11 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useToast } from "@/components/ui/toast-context"
+import { parseUtcTimestamp } from "@/lib/utils"
 import { MessageCircleQuestion, Send } from "lucide-react"
 
 function formatTime(iso: string) {
-  return new Date(iso).toLocaleString(undefined, {
+  return parseUtcTimestamp(iso).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",

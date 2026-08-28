@@ -10,8 +10,8 @@ export default {
     },
     extend: {
       fontFamily: {
-        heading: ["'Instrument Serif'", "Georgia", "serif"],
-        body: ["'Instrument Sans'", "system-ui", "sans-serif"],
+        heading: ["'DM Serif Display'", "Georgia", "serif"],
+        body: ["'Plus Jakarta Sans'", "system-ui", "sans-serif"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -84,6 +84,11 @@ export default {
         "slide-in-left": {
           from: { transform: "translateX(-100%)" },
           to: { transform: "translateX(0)" },
+        },
+        indeterminate: {
+          "0%": { transform: "translateX(-100%)" },
+          "50%": { transform: "translateX(150%)" },
+          "100%": { transform: "translateX(150%)" },
         },
       },
       animation: {
