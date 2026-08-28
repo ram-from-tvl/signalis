@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { leadsApi, pipelineApi } from "@/api/endpoints"
@@ -11,10 +11,29 @@ import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/components/ui/toast-context"
-import { Sparkles, ArrowUpDown, Users } from "lucide-react"
+import { AGENT_ORDER, AGENT_LABELS } from "@/lib/agents"
+import { parseUtcTimestamp } from "@/lib/utils"
+import { Sparkles, ArrowUpDown, Users, Loader2 } from "lucide-react"
 import { motion } from "motion/react"
 
 type SortKey = "name" | "confidence" | "created_at"
+
+// Bulk pipeline runs span N leads at once, so there's no single lead to poll
+// a real per-agent trace for — this rotates through the pipeline's real 5
+// agent names as an honest "here's the kind of work happening" cue rather
+// than a generic spinner, without inventing per-lead progress tracking.
+function useRotatingAgentLabel(active: boolean, intervalMs = 1800) {
+  const [index, setIndex] = useState(0)
+  useEffect(() => {
+    if (!active) {
+      setIndex(0)
+      return
+    }
+    const id = setInterval(() => setIndex((i) => (i + 1) % AGENT_ORDER.length), intervalMs)
+    return () => clearInterval(id)
+  }, [active, intervalMs])
+  return AGENT_LABELS[AGENT_ORDER[index]]
+}
 
 export function LeadPipelinePage() {
   const queryClient = useQueryClient()
@@ -42,6 +61,8 @@ export function LeadPipelinePage() {
     onError: (err: Error) => push({ title: "Pipeline run failed", description: err.message, variant: "error" }),
   })
 
+  const rotatingAgentLabel = useRotatingAgentLabel(runPipeline.isPending)
+
   const filteredSorted = useMemo(() => {
     if (!leads) return []
     let items = [...leads]
@@ -52,7 +73,7 @@ export function LeadPipelinePage() {
       if (sortKey === "name") return a.lead.name.localeCompare(b.lead.name)
       if (sortKey === "confidence")
         return (b.latest_classification?.confidence ?? -1) - (a.latest_classification?.confidence ?? -1)
-      return new Date(b.lead.created_at).getTime() - new Date(a.lead.created_at).getTime()
+      return parseUtcTimestamp(b.lead.created_at).getTime() - parseUtcTimestamp(a.lead.created_at).getTime()
     })
     return items
   }, [leads, stageFilter, sortKey])
@@ -71,10 +92,29 @@ export function LeadPipelinePage() {
           onClick={() => runPipeline.mutate(undefined)}
           disabled={runPipeline.isPending || !leads?.length}
         >
-          <Sparkles className="h-4 w-4" />
+          {runPipeline.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+          ) : (
+            <Sparkles className="h-4 w-4" />
+          )}
           {runPipeline.isPending ? "Running agents..." : "Run Pipeline for All Leads"}
         </Button>
       </div>
+
+      {runPipeline.isPending && (
+        <div
+          className="flex items-center gap-3 rounded-lg border border-border bg-secondary/40 px-4 py-3"
+          aria-busy="true"
+          aria-live="polite"
+        >
+          <div className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden">
+            <div className="h-full w-1/3 rounded-full bg-accent animate-[indeterminate_1.4s_ease-in-out_infinite] motion-reduce:animate-none motion-reduce:w-full" />
+          </div>
+          <p className="text-xs text-muted-foreground shrink-0 tabular-nums min-w-[11rem] text-right">
+            Running {rotatingAgentLabel}&hellip;
+          </p>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-3">
         <Select value={stageFilter} onValueChange={(v) => setStageFilter(v as Stage | "all")}>

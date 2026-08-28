@@ -12,34 +12,68 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
 import { AgentRunFollowupPanel } from "@/components/leads/AgentRunFollowupPanel"
+import { PipelineProgressPanel } from "@/components/leads/PipelineProgressPanel"
 import { useToast } from "@/components/ui/toast-context"
+import { AGENT_LABELS, AGENT_ACCENT_VARS } from "@/lib/agents"
 import { ArrowLeft, Sparkles, TrendingUp, CheckCircle2, XCircle, Clock, Bot, ShieldAlert } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
-import { cn } from "@/lib/utils"
-
-const AGENT_LABELS: Record<string, string> = {
-  signal_extraction: "Signal Extraction",
-  persona_fit: "Persona Fit",
-  buying_stage_orchestrator: "Buying Stage Orchestrator",
-  outreach_planner: "Outreach Planner",
-  explainability: "Explainability",
-}
-
-const AGENT_ACCENT_VARS: Record<string, string> = {
-  signal_extraction: "--agent-signal-extraction",
-  persona_fit: "--agent-persona-fit",
-  buying_stage_orchestrator: "--agent-buying-stage",
-  outreach_planner: "--agent-outreach-planner",
-  explainability: "--agent-explainability",
-}
+import { cn, parseUtcTimestamp } from "@/lib/utils"
 
 function formatDate(iso: string) {
-  return new Date(iso).toLocaleString(undefined, {
+  return parseUtcTimestamp(iso).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
   })
+}
+
+// Fields already visible elsewhere in a signal's timeline row (the event
+// title, the raw-source badge, the timestamp) or redundant with the lead
+// already shown at the top of the page — never worth repeating here.
+const SIGNAL_PAYLOAD_HIDDEN_KEYS = new Set([
+  "event_type",
+  "lead_email",
+  "name",
+  "company",
+  "timestamp",
+  "simulated",
+])
+
+function formatSignalPayloadKey(key: string) {
+  return key
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ")
+}
+
+function formatSignalPayloadValue(value: unknown) {
+  if (value === null || value === undefined) return "—"
+  if (typeof value === "string") return value.replace(/_/g, " ")
+  if (typeof value === "boolean") return value ? "Yes" : "No"
+  return String(value)
+}
+
+// Renders a signal's raw_payload as plain "Key: value" pairs instead of
+// dumped JSON — the shape varies by raw_source (website events carry
+// page/lead_email/..., CRM events carry deal_stage/last_activity/...), so
+// this degrades to a generic label for any key it doesn't special-case
+// rather than ever falling back to JSON.stringify.
+function SignalPayloadDetail({ payload }: { payload: Record<string, unknown> | null | undefined }) {
+  if (!payload || typeof payload !== "object") return null
+  const entries = Object.entries(payload).filter(([key]) => !SIGNAL_PAYLOAD_HIDDEN_KEYS.has(key))
+  if (entries.length === 0) return null
+
+  return (
+    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground mt-0.5">
+      {entries.map(([key, value]) => (
+        <span key={key}>
+          <span className="font-medium text-foreground/70">{formatSignalPayloadKey(key)}:</span>{" "}
+          {formatSignalPayloadValue(value)}
+        </span>
+      ))}
+    </div>
+  )
 }
 
 type BadgeVariant = "success" | "destructive" | "warning" | "outline"
@@ -308,7 +342,9 @@ export function LeadDetailPage() {
         </div>
       </div>
 
-      {latestClassification ? (
+      {runPipeline.isPending ? (
+        <PipelineProgressPanel leadId={leadId!} />
+      ) : latestClassification ? (
         <Card>
           <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">
             <div>
@@ -554,9 +590,7 @@ export function LeadDetailPage() {
                         <Badge variant="outline" className="capitalize text-[10px]">{signal.raw_source}</Badge>
                         <span className="text-xs text-muted-foreground">{formatDate(signal.occurred_at)}</span>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-xl">
-                        {JSON.stringify(signal.raw_payload)}
-                      </p>
+                      <SignalPayloadDetail payload={signal.raw_payload} />
                     </li>
                   ))}
               </ol>
