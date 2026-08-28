@@ -147,3 +147,32 @@
   background-color: hsl(var(--border));
   border-radius: 999px;
 }
+
+/* Ambient background: two very low-opacity radial gradients (accent +
+   stage-late tokens) that drift slowly, giving flat surfaces a sense of
+   depth without introducing any new color. Fixed attachment so it reads
+   as one continuous field behind scrolling content rather than repeating
+   per-page. */
+.app-ambient-bg {
+  background-color: hsl(var(--background));
+  background-image:
+    radial-gradient(ellipse 80% 60% at 15% 0%, hsl(var(--accent) / 0.05), transparent 60%),
+    radial-gradient(ellipse 70% 60% at 100% 100%, hsl(var(--stage-late) / 0.05), transparent 60%);
+  background-attachment: fixed;
+  background-size: 100% 100%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .app-ambient-bg {
+    animation: ambient-drift 40s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes ambient-drift {
+  from {
+    background-position: 0% 0%, 100% 100%;
+  }
+  to {
+    background-position: 6% 4%, 94% 96%;
+  }
+}

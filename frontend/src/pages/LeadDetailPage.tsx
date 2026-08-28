@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
+import { ClickSpark } from "@/components/ui/click-spark"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
@@ -78,6 +79,7 @@ export function LeadDetailPage() {
   const queryClient = useQueryClient()
   const { push } = useToast()
   const [simulatingSignal, setSimulatingSignal] = useState(false)
+  const [activeTab, setActiveTab] = useState("plan")
 
   const {
     data: detail,
@@ -342,13 +344,15 @@ export function LeadDetailPage() {
             )}
             {latestClassification.approval_status === "pending_approval" && (
               <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={() => approveClassification.mutate(latestClassification.id)}
-                >
-                  <CheckCircle2 className="h-4 w-4" /> Approve Classification
-                </Button>
+                <ClickSpark>
+                  <Button
+                    size="sm"
+                    variant="default"
+                    onClick={() => approveClassification.mutate(latestClassification.id)}
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> Approve Classification
+                  </Button>
+                </ClickSpark>
                 <Button
                   size="sm"
                   variant="outline"
@@ -438,12 +442,12 @@ export function LeadDetailPage() {
           </Card>
         ))}
 
-      <Tabs defaultValue="plan">
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList>
-          <TabsTrigger value="plan">Outreach Plan</TabsTrigger>
-          <TabsTrigger value="signals">Signal History</TabsTrigger>
-          <TabsTrigger value="trace">Agent Trace</TabsTrigger>
-          <TabsTrigger value="history">Classification History</TabsTrigger>
+          <TabsTrigger value="plan" active={activeTab === "plan"}>Outreach Plan</TabsTrigger>
+          <TabsTrigger value="signals" active={activeTab === "signals"}>Signal History</TabsTrigger>
+          <TabsTrigger value="trace" active={activeTab === "trace"}>Agent Trace</TabsTrigger>
+          <TabsTrigger value="history" active={activeTab === "history"}>Classification History</TabsTrigger>
         </TabsList>
 
         <TabsContent value="plan">
@@ -495,9 +499,11 @@ export function LeadDetailPage() {
                 </ol>
                 {latest_plan.status === "pending_approval" && (
                   <div className="flex gap-2">
-                    <Button size="sm" onClick={() => approvePlan.mutate(latest_plan.id)}>
-                      <CheckCircle2 className="h-4 w-4" /> Approve Plan
-                    </Button>
+                    <ClickSpark>
+                      <Button size="sm" onClick={() => approvePlan.mutate(latest_plan.id)}>
+                        <CheckCircle2 className="h-4 w-4" /> Approve Plan
+                      </Button>
+                    </ClickSpark>
                     <Button size="sm" variant="outline" onClick={() => rejectPlan.mutate(latest_plan.id)}>
                       <XCircle className="h-4 w-4" /> Reject Plan
                     </Button>
