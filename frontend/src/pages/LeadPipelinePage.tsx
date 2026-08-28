@@ -11,7 +11,7 @@ import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/components/ui/toast-context"
-import { Sparkles, ArrowUpDown } from "lucide-react"
+import { Sparkles, ArrowUpDown, Users } from "lucide-react"
 import { motion } from "motion/react"
 
 type SortKey = "name" | "confidence" | "created_at"
@@ -120,11 +120,14 @@ export function LeadPipelinePage() {
 
       {!isLoading && filteredSorted.length === 0 && (
         <Card>
-          <CardContent className="py-12 text-center">
-            <p className="text-sm text-muted-foreground">
+          <CardContent className="py-12 flex flex-col items-center text-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent/10 text-accent">
+              <Users className="h-6 w-6" />
+            </div>
+            <p className="text-sm text-muted-foreground max-w-sm">
               No leads match this view yet. Head to Data Sources to upload or load the sample dataset.
             </p>
-            <Button asChild variant="outline" className="mt-4">
+            <Button asChild variant="outline" className="mt-1">
               <Link to="/data">Go to Data Sources</Link>
             </Button>
           </CardContent>

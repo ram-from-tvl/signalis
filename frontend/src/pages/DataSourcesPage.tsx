@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { uploadsApi } from "@/api/endpoints"
 import { API_BASE_URL } from "@/api/client"
@@ -7,7 +7,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/components/ui/toast-context"
-import { FileSpreadsheet, FileJson, CheckCircle2, AlertTriangle } from "lucide-react"
+import { cn } from "@/lib/utils"
+import {
+  FileSpreadsheet,
+  FileJson,
+  CheckCircle2,
+  AlertTriangle,
+  UploadCloud,
+  Sparkles,
+  ThumbsUp,
+} from "lucide-react"
 
 function ReportSummary({ report }: { report: IngestionReport }) {
   return (
@@ -36,6 +45,94 @@ function ReportSummary({ report }: { report: IngestionReport }) {
           </ul>
         </div>
       )}
+    </div>
+  )
+}
+
+function DropZone({
+  icon: Icon,
+  accept,
+  label,
+  onFile,
+  disabled,
+  inputRef,
+}: {
+  icon: React.ElementType
+  accept: string
+  label: string
+  onFile: (file: File) => void
+  disabled: boolean
+  inputRef: React.RefObject<HTMLInputElement>
+}) {
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [dropError, setDropError] = useState<string | null>(null)
+
+  // A new upload starting (browse, sample-data, or a subsequent valid drop)
+  // makes any earlier rejected-drop message stale — clear it so the zone
+  // never keeps claiming a previous file was invalid once a different
+  // upload is actually in flight.
+  useEffect(() => {
+    if (disabled) setDropError(null)
+  }, [disabled])
+
+  // Accept is a single extension like ".csv" today; matching by suffix
+  // keeps this correct if it's ever widened to a comma-separated list.
+  const acceptedExtensions = accept.split(",").map((ext) => ext.trim().toLowerCase())
+  const isAcceptedFile = (file: File) => {
+    const name = file.name.toLowerCase()
+    return acceptedExtensions.some((ext) => name.endsWith(ext))
+  }
+
+  return (
+    <div
+      role="button"
+      tabIndex={disabled ? -1 : 0}
+      aria-label={label}
+      aria-disabled={disabled}
+      onClick={() => {
+        if (disabled) return
+        inputRef.current?.click()
+      }}
+      onKeyDown={(e) => {
+        if (disabled) return
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault()
+          inputRef.current?.click()
+        }
+      }}
+      onDragOver={(e) => {
+        e.preventDefault()
+        if (!disabled) setIsDragOver(true)
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(e) => {
+        // Always preventDefault, even while disabled — otherwise a file
+        // dropped during a pending upload falls through to the browser's
+        // default file-open/navigation behavior instead of being ignored.
+        e.preventDefault()
+        setIsDragOver(false)
+        if (disabled) return
+        const file = e.dataTransfer.files?.[0]
+        if (!file) return
+        if (!isAcceptedFile(file)) {
+          setDropError(`"${file.name}" isn't a ${accept} file.`)
+          return
+        }
+        setDropError(null)
+        onFile(file)
+      }}
+      className={cn(
+        "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
+        isDragOver ? "border-accent bg-accent/5" : "border-border hover:border-accent/50 hover:bg-secondary/40"
+      )}
+    >
+      <Icon className={cn("h-6 w-6", isDragOver ? "text-accent" : "text-muted-foreground")} />
+      <p className="text-sm font-medium">
+        Drag and drop, or <span className="text-accent">browse</span>
+      </p>
+      <p className="text-xs text-muted-foreground">Accepts {accept}</p>
+      {dropError && <p className="text-xs text-destructive">{dropError}</p>}
     </div>
   )
 }
@@ -106,19 +203,18 @@ export function DataSourcesPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
+            <DropZone
+              icon={UploadCloud}
+              accept=".csv"
+              label="Upload CRM CSV"
+              disabled={csvMutation.isPending}
+              inputRef={csvInputRef}
+              onFile={(file) => {
+                setCsvIsSample(false)
+                csvMutation.mutate(file)
+              }}
+            />
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setCsvIsSample(false)
-                  csvInputRef.current?.click()
-                }}
-              >
-                Upload CSV
-              </Button>
-              <Button variant="accent" onClick={() => loadSample("crm")} disabled={csvMutation.isPending}>
-                Use Sample Data
-              </Button>
               <input
                 ref={csvInputRef}
                 type="file"
@@ -126,10 +222,16 @@ export function DataSourcesPage() {
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0]
-                  if (file) csvMutation.mutate(file)
+                  if (file) {
+                    setCsvIsSample(false)
+                    csvMutation.mutate(file)
+                  }
                   e.target.value = ""
                 }}
               />
+              <Button variant="accent" size="sm" onClick={() => loadSample("crm")} disabled={csvMutation.isPending}>
+                Use Sample Data
+              </Button>
             </div>
             {csvIsSample && <Badge variant="outline">Loaded from bundled sample dataset</Badge>}
             {csvMutation.isPending && <p className="text-sm text-muted-foreground">Uploading...</p>}
@@ -148,19 +250,18 @@ export function DataSourcesPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
+            <DropZone
+              icon={UploadCloud}
+              accept=".json"
+              label="Upload website events JSON"
+              disabled={jsonMutation.isPending}
+              inputRef={jsonInputRef}
+              onFile={(file) => {
+                setJsonIsSample(false)
+                jsonMutation.mutate(file)
+              }}
+            />
             <div className="flex gap-2">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setJsonIsSample(false)
-                  jsonInputRef.current?.click()
-                }}
-              >
-                Upload JSON
-              </Button>
-              <Button variant="accent" onClick={() => loadSample("events")} disabled={jsonMutation.isPending}>
-                Use Sample Data
-              </Button>
               <input
                 ref={jsonInputRef}
                 type="file"
@@ -168,10 +269,16 @@ export function DataSourcesPage() {
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0]
-                  if (file) jsonMutation.mutate(file)
+                  if (file) {
+                    setJsonIsSample(false)
+                    jsonMutation.mutate(file)
+                  }
                   e.target.value = ""
                 }}
               />
+              <Button variant="accent" size="sm" onClick={() => loadSample("events")} disabled={jsonMutation.isPending}>
+                Use Sample Data
+              </Button>
             </div>
             {jsonIsSample && <Badge variant="outline">Loaded from bundled sample dataset</Badge>}
             {jsonMutation.isPending && <p className="text-sm text-muted-foreground">Uploading...</p>}
@@ -179,6 +286,42 @@ export function DataSourcesPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Pipeline at a glance</CardTitle>
+          <CardDescription>What happens to your data once it's loaded.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ol className="relative flex flex-col gap-6 before:absolute before:left-[15px] before:top-2 before:bottom-2 before:w-px before:bg-border">
+            {[
+              {
+                icon: UploadCloud,
+                title: "Upload",
+                body: "CRM and website data land as leads and signals, deduped by email.",
+              },
+              {
+                icon: Sparkles,
+                title: "Classify",
+                body: "The agent pipeline scores buying stage, persona fit, and drafts an outreach plan.",
+              },
+              {
+                icon: ThumbsUp,
+                title: "Approve",
+                body: "A marketer reviews and approves every plan before anything is considered ready to send.",
+              },
+            ].map((step) => (
+              <li key={step.title} className="relative pl-11">
+                <span className="absolute left-0 top-0 flex h-8 w-8 items-center justify-center rounded-full bg-accent/10 text-accent">
+                  <step.icon className="h-4 w-4" />
+                </span>
+                <p className="text-sm font-semibold">{step.title}</p>
+                <p className="text-sm text-muted-foreground mt-0.5">{step.body}</p>
+              </li>
+            ))}
+          </ol>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

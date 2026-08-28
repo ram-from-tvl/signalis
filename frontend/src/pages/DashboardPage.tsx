@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
 import { useToast } from "@/components/ui/toast-context"
+import { useCountUp } from "@/lib/useCountUp"
 import type { SubagentDelegation } from "@/types/api"
 import {
   Bar,
@@ -31,22 +32,27 @@ function StatTile({
   icon: Icon,
   label,
   value,
+  format,
   hint,
 }: {
   icon: React.ElementType
   label: string
-  value: string
+  value: number
+  format?: (n: number) => string
   hint?: string
 }) {
+  const animated = useCountUp(value)
+  const displayValue = format ? format(animated) : String(Math.round(animated))
+
   return (
-    <Card>
+    <Card className="transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-raised">
       <CardContent className="py-5 flex items-start gap-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent shrink-0">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-accent/15 to-accent/5 text-accent shrink-0">
           <Icon className="h-5 w-5" />
         </div>
         <div>
           <p className="text-xs text-muted-foreground font-medium">{label}</p>
-          <p className="font-heading text-2xl font-bold mt-0.5">{value}</p>
+          <p className="font-heading text-2xl font-bold mt-0.5 tabular-nums">{displayValue}</p>
           {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
         </div>
       </CardContent>
@@ -187,22 +193,24 @@ export function DashboardPage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatTile icon={Users} label="Total Leads" value={String(stats.total_leads)} />
+        <StatTile icon={Users} label="Total Leads" value={stats.total_leads} />
         <StatTile
           icon={FileCheck}
           label="Plans Generated"
-          value={String(stats.plans_generated)}
+          value={stats.plans_generated}
           hint={`${stats.plans_pending_approval} pending approval`}
         />
         <StatTile
           icon={Gauge}
           label="Avg. Confidence"
-          value={`${Math.round(stats.average_confidence * 100)}%`}
+          value={stats.average_confidence * 100}
+          format={(n) => `${Math.round(n)}%`}
         />
         <StatTile
           icon={Timer}
           label="Avg. Agent Latency"
-          value={`${stats.average_agent_latency_seconds.toFixed(1)}s`}
+          value={stats.average_agent_latency_seconds}
+          format={(n) => `${n.toFixed(1)}s`}
           hint="per agent call, measured"
         />
       </div>

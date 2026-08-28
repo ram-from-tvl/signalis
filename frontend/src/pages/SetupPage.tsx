@@ -7,9 +7,10 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/components/ui/toast-context"
+import { cn } from "@/lib/utils"
+import { Check } from "lucide-react"
 
 const CHANNEL_OPTIONS = ["email", "linkedin", "phone", "events"]
 
@@ -228,16 +229,28 @@ export function SetupPage() {
             </div>
             <div className="flex flex-col gap-2">
               <Label>Target Channels</Label>
-              <div className="flex flex-wrap gap-4">
-                {CHANNEL_OPTIONS.map((channel) => (
-                  <label key={channel} className="flex items-center gap-2 text-sm capitalize cursor-pointer">
-                    <Checkbox
-                      checked={solutionForm.channels.includes(channel)}
-                      onCheckedChange={() => toggleChannel(channel)}
-                    />
-                    {channel}
-                  </label>
-                ))}
+              <div className="flex flex-wrap gap-2">
+                {CHANNEL_OPTIONS.map((channel) => {
+                  const checked = solutionForm.channels.includes(channel)
+                  return (
+                    <button
+                      key={channel}
+                      type="button"
+                      role="checkbox"
+                      aria-checked={checked}
+                      onClick={() => toggleChannel(channel)}
+                      className={cn(
+                        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-semibold capitalize cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        checked
+                          ? "border-transparent bg-accent text-accent-foreground"
+                          : "border-border text-foreground hover:bg-secondary"
+                      )}
+                    >
+                      {checked && <Check className="h-3 w-3" />}
+                      {channel}
+                    </button>
+                  )
+                })}
               </div>
             </div>
             <Button
