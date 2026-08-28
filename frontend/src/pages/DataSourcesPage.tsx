@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useMutation } from "@tanstack/react-query"
 import { uploadsApi } from "@/api/endpoints"
 import { API_BASE_URL } from "@/api/client"
@@ -67,6 +67,14 @@ function DropZone({
   const [isDragOver, setIsDragOver] = useState(false)
   const [dropError, setDropError] = useState<string | null>(null)
 
+  // A new upload starting (browse, sample-data, or a subsequent valid drop)
+  // makes any earlier rejected-drop message stale — clear it so the zone
+  // never keeps claiming a previous file was invalid once a different
+  // upload is actually in flight.
+  useEffect(() => {
+    if (disabled) setDropError(null)
+  }, [disabled])
+
   // Accept is a single extension like ".csv" today; matching by suffix
   // keeps this correct if it's ever widened to a comma-separated list.
   const acceptedExtensions = accept.split(",").map((ext) => ext.trim().toLowerCase())
@@ -98,6 +106,9 @@ function DropZone({
       }}
       onDragLeave={() => setIsDragOver(false)}
       onDrop={(e) => {
+        // Always preventDefault, even while disabled — otherwise a file
+        // dropped during a pending upload falls through to the browser's
+        // default file-open/navigation behavior instead of being ignored.
         e.preventDefault()
         setIsDragOver(false)
         if (disabled) return
@@ -112,7 +123,7 @@ function DropZone({
       }}
       className={cn(
         "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        disabled ? "pointer-events-none opacity-60" : "cursor-pointer",
+        disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
         isDragOver ? "border-accent bg-accent/5" : "border-border hover:border-accent/50 hover:bg-secondary/40"
       )}
     >
