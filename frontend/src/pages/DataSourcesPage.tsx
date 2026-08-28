@@ -65,14 +65,28 @@ function DropZone({
   inputRef: React.RefObject<HTMLInputElement>
 }) {
   const [isDragOver, setIsDragOver] = useState(false)
+  const [dropError, setDropError] = useState<string | null>(null)
+
+  // Accept is a single extension like ".csv" today; matching by suffix
+  // keeps this correct if it's ever widened to a comma-separated list.
+  const acceptedExtensions = accept.split(",").map((ext) => ext.trim().toLowerCase())
+  const isAcceptedFile = (file: File) => {
+    const name = file.name.toLowerCase()
+    return acceptedExtensions.some((ext) => name.endsWith(ext))
+  }
 
   return (
     <div
       role="button"
-      tabIndex={0}
+      tabIndex={disabled ? -1 : 0}
       aria-label={label}
-      onClick={() => inputRef.current?.click()}
+      aria-disabled={disabled}
+      onClick={() => {
+        if (disabled) return
+        inputRef.current?.click()
+      }}
       onKeyDown={(e) => {
+        if (disabled) return
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault()
           inputRef.current?.click()
@@ -88,11 +102,17 @@ function DropZone({
         setIsDragOver(false)
         if (disabled) return
         const file = e.dataTransfer.files?.[0]
-        if (file) onFile(file)
+        if (!file) return
+        if (!isAcceptedFile(file)) {
+          setDropError(`"${file.name}" isn't a ${accept} file.`)
+          return
+        }
+        setDropError(null)
+        onFile(file)
       }}
       className={cn(
-        "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 text-center cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-        disabled && "pointer-events-none opacity-60",
+        "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        disabled ? "pointer-events-none opacity-60" : "cursor-pointer",
         isDragOver ? "border-accent bg-accent/5" : "border-border hover:border-accent/50 hover:bg-secondary/40"
       )}
     >
@@ -101,6 +121,7 @@ function DropZone({
         Drag and drop, or <span className="text-accent">browse</span>
       </p>
       <p className="text-xs text-muted-foreground">Accepts {accept}</p>
+      {dropError && <p className="text-xs text-destructive">{dropError}</p>}
     </div>
   )
 }

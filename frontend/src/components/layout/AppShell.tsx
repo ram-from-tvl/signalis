@@ -113,7 +113,7 @@ export function AppShell() {
             <DialogPrimitive.Portal>
               <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm data-[state=open]:animate-fade-in" />
               <DialogPrimitive.Content
-                className="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[80vw] flex-col border-r border-border bg-surface shadow-raised data-[state=open]:animate-slide-in-left"
+                className="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[80vw] flex-col border-r border-border bg-surface shadow-raised data-[state=open]:animate-slide-in-left motion-reduce:data-[state=open]:animate-none"
                 aria-describedby={undefined}
               >
                 <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
