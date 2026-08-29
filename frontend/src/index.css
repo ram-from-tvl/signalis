@@ -46,6 +46,9 @@
   --warning: 39 63% 48%;
   --warning-foreground: 30 40% 12%;
 
+  --info: 213 40% 45%;
+  --info-foreground: 0 0% 100%;
+
   --stage-early: 156 7% 43%;
   --stage-mid: 39 63% 34%;
   --stage-late: 143 21% 40%;
@@ -100,6 +103,9 @@
 
   --warning: 39 66% 55%;
   --warning-foreground: 30 40% 10%;
+
+  --info: 213 45% 62%;
+  --info-foreground: 213 45% 10%;
 
   --stage-early: 156 8% 55%;
   --stage-mid: 39 66% 55%;

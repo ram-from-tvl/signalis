@@ -8,11 +8,21 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { KeyValueBuilder } from "@/components/ui/key-value-builder"
 import { useToast } from "@/components/ui/toast-context"
-import { cn } from "@/lib/utils"
+import { cn, parseUtcTimestamp } from "@/lib/utils"
 import { Check } from "lucide-react"
 
 const CHANNEL_OPTIONS = ["email", "linkedin", "phone", "events"]
+
+function formatSavedAt(iso: string) {
+  return parseUtcTimestamp(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  })
+}
 
 function usePersonaForm(existing?: Persona) {
   const [form, setForm] = useState<PersonaInput>({
@@ -37,8 +47,8 @@ export function SetupPage() {
   const currentSolution = solutions?.[0]
 
   const { form: personaForm, setForm: setPersonaForm } = usePersonaForm(currentPersona)
-  const [customTraitsText, setCustomTraitsText] = useState(
-    currentPersona ? JSON.stringify(currentPersona.custom_traits, null, 2) : "{}"
+  const [customTraits, setCustomTraits] = useState<Record<string, unknown>>(
+    currentPersona?.custom_traits ?? {}
   )
 
   const [solutionForm, setSolutionForm] = useState<SolutionInput>({
@@ -57,12 +67,6 @@ export function SetupPage() {
 
   const personaMutation = useMutation({
     mutationFn: async () => {
-      let customTraits: Record<string, unknown> = {}
-      try {
-        customTraits = customTraitsText.trim() ? JSON.parse(customTraitsText) : {}
-      } catch {
-        throw new Error("Custom traits must be valid JSON")
-      }
       const payload = { ...personaForm, custom_traits: customTraits }
       return currentPersona
         ? personasApi.update(currentPersona.id, payload)
@@ -167,14 +171,11 @@ export function SetupPage() {
               </div>
             </div>
             <div className="flex flex-col gap-1.5">
-              <Label htmlFor="traits">Custom Traits (JSON)</Label>
-              <Textarea
-                id="traits"
-                rows={4}
-                className="font-mono text-xs"
-                value={customTraitsText}
-                onChange={(e) => setCustomTraitsText(e.target.value)}
-              />
+              <Label>Custom Traits</Label>
+              <p className="text-xs text-muted-foreground -mt-1">
+                Any extra fit criteria the Persona Fit Agent should weigh, beyond the fields above.
+              </p>
+              <KeyValueBuilder value={customTraits} onChange={setCustomTraits} />
             </div>
             <Button
               onClick={() => personaMutation.mutate()}
@@ -273,18 +274,27 @@ export function SetupPage() {
               solution are treated as active.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-wrap gap-2">
-            {currentPersona && (
-              <Badge variant="secondary">Persona: {currentPersona.role || "Unnamed"}</Badge>
+          <CardContent className="flex flex-col gap-2">
+            <div className="flex flex-wrap gap-2">
+              {currentPersona && (
+                <Badge variant="secondary">Persona: {currentPersona.role || "Unnamed"}</Badge>
+              )}
+              {currentSolution && (
+                <Badge variant="secondary">Solution: {currentSolution.name || "Unnamed"}</Badge>
+              )}
+              {currentSolution?.channels.map((c) => (
+                <Badge key={c} variant="outline" className="capitalize">
+                  {c}
+                </Badge>
+              ))}
+            </div>
+            {(currentPersona || currentSolution) && (
+              <p className="text-xs text-muted-foreground">
+                {currentPersona && `Persona saved ${formatSavedAt(currentPersona.created_at)}`}
+                {currentPersona && currentSolution && " · "}
+                {currentSolution && `Solution saved ${formatSavedAt(currentSolution.created_at)}`}
+              </p>
             )}
-            {currentSolution && (
-              <Badge variant="secondary">Solution: {currentSolution.name || "Unnamed"}</Badge>
-            )}
-            {currentSolution?.channels.map((c) => (
-              <Badge key={c} variant="outline" className="capitalize">
-                {c}
-              </Badge>
-            ))}
           </CardContent>
         </Card>
       )}

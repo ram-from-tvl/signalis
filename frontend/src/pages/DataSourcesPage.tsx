@@ -293,7 +293,7 @@ export function DataSourcesPage() {
           <CardDescription>What happens to your data once it's loaded.</CardDescription>
         </CardHeader>
         <CardContent>
-          <ol className="relative flex flex-col gap-6 before:absolute before:left-[15px] before:top-2 before:bottom-2 before:w-px before:bg-border">
+          <ol className="relative flex flex-col gap-6 before:absolute before:left-[15px] before:top-4 before:h-[calc(100%-2rem)] before:w-px before:bg-border">
             {[
               {
                 icon: UploadCloud,
@@ -327,12 +327,24 @@ export function DataSourcesPage() {
         <CardHeader>
           <CardTitle>What happens next</CardTitle>
         </CardHeader>
-        <CardContent className="text-sm text-muted-foreground">
-          Once leads and signals are loaded, head to the Pipeline view to
-          trigger the agent graph for one or all leads. The API is reachable
-          directly at <code className="text-xs bg-secondary px-1 py-0.5 rounded">{API_BASE_URL}</code> if
-          you want to inspect requests, and the interactive API reference is
-          served at <code className="text-xs bg-secondary px-1 py-0.5 rounded">{API_BASE_URL}/docs</code>.
+        <CardContent className="flex flex-col gap-3 text-sm text-muted-foreground">
+          <p>
+            Once leads and signals are loaded, head to the Pipeline view to trigger the agent graph
+            for one or all leads.
+          </p>
+          <details className="group text-xs">
+            <summary className="cursor-pointer select-none font-medium text-foreground/70 hover:text-foreground">
+              Developer info
+            </summary>
+            <div className="mt-2 flex flex-col gap-1">
+              <span>
+                API: <code className="bg-secondary px-1 py-0.5 rounded">{API_BASE_URL}</code>
+              </span>
+              <span>
+                Interactive docs: <code className="bg-secondary px-1 py-0.5 rounded">{API_BASE_URL}/docs</code>
+              </span>
+            </div>
+          </details>
         </CardContent>
       </Card>
     </div>

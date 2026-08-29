@@ -13,6 +13,7 @@ const badgeVariants = cva(
         outline: "border-border text-foreground",
         success: "border-transparent bg-success text-success-foreground",
         warning: "border-transparent bg-warning text-warning-foreground",
+        info: "border-transparent bg-info text-info-foreground",
         destructive: "border-transparent bg-destructive text-destructive-foreground",
         stageEarly: "border-transparent bg-stage-early/15 text-stage-early",
         stageMid: "border-transparent bg-stage-mid/15 text-stage-mid",
@@ -27,8 +28,9 @@ export interface BadgeProps
   extends React.HTMLAttributes<HTMLDivElement>,
     VariantProps<typeof badgeVariants> {}
 
-function Badge({ className, variant, ...props }: BadgeProps) {
-  return <div className={cn(badgeVariants({ variant }), className)} {...props} />
-}
+const Badge = React.forwardRef<HTMLDivElement, BadgeProps>(({ className, variant, ...props }, ref) => {
+  return <div ref={ref} className={cn(badgeVariants({ variant }), className)} {...props} />
+})
+Badge.displayName = "Badge"
 
 export { Badge, badgeVariants }

@@ -11,13 +11,14 @@ import { ClickSpark } from "@/components/ui/click-spark"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
-import { AgentRunFollowupPanel } from "@/components/leads/AgentRunFollowupPanel"
 import { PipelineProgressPanel } from "@/components/leads/PipelineProgressPanel"
+import { AgentTraceTab } from "@/components/leads/AgentTraceTab"
+import { ConfidenceTrendChart } from "@/components/leads/ConfidenceTrendChart"
+import { SignalHistoryTab } from "@/components/leads/SignalHistoryTab"
+import { ApprovePlanButton } from "@/components/leads/ApprovePlanButton"
 import { useToast } from "@/components/ui/toast-context"
-import { AGENT_LABELS, AGENT_ACCENT_VARS } from "@/lib/agents"
-import { ArrowLeft, Sparkles, TrendingUp, CheckCircle2, XCircle, Clock, Bot, ShieldAlert } from "lucide-react"
-import { AnimatePresence, motion } from "motion/react"
-import { cn, parseUtcTimestamp } from "@/lib/utils"
+import { ArrowLeft, Sparkles, TrendingUp, CheckCircle2, XCircle, ShieldAlert } from "lucide-react"
+import { parseUtcTimestamp } from "@/lib/utils"
 
 function formatDate(iso: string) {
   return parseUtcTimestamp(iso).toLocaleString(undefined, {
@@ -26,54 +27,6 @@ function formatDate(iso: string) {
     hour: "numeric",
     minute: "2-digit",
   })
-}
-
-// Fields already visible elsewhere in a signal's timeline row (the event
-// title, the raw-source badge, the timestamp) or redundant with the lead
-// already shown at the top of the page — never worth repeating here.
-const SIGNAL_PAYLOAD_HIDDEN_KEYS = new Set([
-  "event_type",
-  "lead_email",
-  "name",
-  "company",
-  "timestamp",
-  "simulated",
-])
-
-function formatSignalPayloadKey(key: string) {
-  return key
-    .split("_")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ")
-}
-
-function formatSignalPayloadValue(value: unknown) {
-  if (value === null || value === undefined) return "—"
-  if (typeof value === "string") return value.replace(/_/g, " ")
-  if (typeof value === "boolean") return value ? "Yes" : "No"
-  return String(value)
-}
-
-// Renders a signal's raw_payload as plain "Key: value" pairs instead of
-// dumped JSON — the shape varies by raw_source (website events carry
-// page/lead_email/..., CRM events carry deal_stage/last_activity/...), so
-// this degrades to a generic label for any key it doesn't special-case
-// rather than ever falling back to JSON.stringify.
-function SignalPayloadDetail({ payload }: { payload: Record<string, unknown> | null | undefined }) {
-  if (!payload || typeof payload !== "object") return null
-  const entries = Object.entries(payload).filter(([key]) => !SIGNAL_PAYLOAD_HIDDEN_KEYS.has(key))
-  if (entries.length === 0) return null
-
-  return (
-    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground mt-0.5">
-      {entries.map(([key, value]) => (
-        <span key={key}>
-          <span className="font-medium text-foreground/70">{formatSignalPayloadKey(key)}:</span>{" "}
-          {formatSignalPayloadValue(value)}
-        </span>
-      ))}
-    </div>
-  )
 }
 
 type BadgeVariant = "success" | "destructive" | "warning" | "outline"
@@ -521,9 +474,25 @@ export function LeadDetailPage() {
                 </div>
               </CardHeader>
               <CardContent className="flex flex-col gap-4">
+                {latest_plan.email_verification_status &&
+                  ["invalid", "disposable"].includes(latest_plan.email_verification_status) && (
+                    <div className="flex items-start gap-2.5 rounded-lg border border-destructive/30 bg-destructive/10 p-3">
+                      <ShieldAlert className="h-4 w-4 shrink-0 text-destructive mt-0.5" />
+                      <p className="text-xs text-destructive">
+                        <span className="font-semibold">
+                          {emailVerificationBadge(latest_plan.email_verification_status).label}.
+                        </span>{" "}
+                        Sending to this address risks a bounce and damages sender reputation — verify or
+                        replace the lead's email before approving.
+                      </p>
+                    </div>
+                  )}
                 <ol className="flex flex-col gap-3">
                   {latest_plan.touchpoints.map((tp, i) => (
-                    <li key={i} className="rounded-lg border border-border p-4">
+                    <li key={i} className="relative rounded-lg border border-border p-4 pl-12">
+                      <span className="absolute left-4 top-4 flex h-6 w-6 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-secondary-foreground">
+                        {i + 1}
+                      </span>
                       <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <Badge variant="secondary">Day {tp.day_offset}</Badge>
                         <Badge variant="outline" className="capitalize">{tp.channel}</Badge>
@@ -535,11 +504,7 @@ export function LeadDetailPage() {
                 </ol>
                 {latest_plan.status === "pending_approval" && (
                   <div className="flex gap-2">
-                    <ClickSpark>
-                      <Button size="sm" onClick={() => approvePlan.mutate(latest_plan.id)}>
-                        <CheckCircle2 className="h-4 w-4" /> Approve Plan
-                      </Button>
-                    </ClickSpark>
+                    <ApprovePlanButton onConfirm={() => approvePlan.mutate(latest_plan.id)} />
                     <Button size="sm" variant="outline" onClick={() => rejectPlan.mutate(latest_plan.id)}>
                       <XCircle className="h-4 w-4" /> Reject Plan
                     </Button>
@@ -562,114 +527,17 @@ export function LeadDetailPage() {
         </TabsContent>
 
         <TabsContent value="signals">
-          <Card>
-            <CardContent className="py-4">
-              <ol className="relative flex flex-col gap-4 before:absolute before:left-[7px] before:top-2 before:bottom-2 before:w-px before:bg-border">
-                {signals.length === 0 && (
-                  <p className="text-sm text-muted-foreground">No signals recorded for this lead yet.</p>
-                )}
-                {signals
-                  .slice()
-                  .reverse()
-                  .map((signal) => (
-                    <li key={signal.id} className="relative pl-6">
-                      <span
-                        className={cn(
-                          "absolute left-0 top-1.5 h-3.5 w-3.5 rounded-full border-2 border-background",
-                          signal.intent_stage_hint === "late"
-                            ? "bg-stage-late"
-                            : signal.intent_stage_hint === "mid"
-                              ? "bg-stage-mid"
-                              : "bg-stage-early"
-                        )}
-                      />
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-semibold capitalize">
-                          {signal.event_type.replace(/_/g, " ")}
-                        </span>
-                        <Badge variant="outline" className="capitalize text-[10px]">{signal.raw_source}</Badge>
-                        <span className="text-xs text-muted-foreground">{formatDate(signal.occurred_at)}</span>
-                      </div>
-                      <SignalPayloadDetail payload={signal.raw_payload} />
-                    </li>
-                  ))}
-              </ol>
-            </CardContent>
-          </Card>
+          <SignalHistoryTab signals={signals} />
         </TabsContent>
 
         <TabsContent value="trace">
-          <div className="flex flex-col gap-3">
-            <AnimatePresence>
-              {(trace ?? []).map((run, i) => (
-                <motion.div
-                  key={run.id}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.2, delay: i * 0.05 }}
-                >
-                  <Card
-                    className="border-l-4"
-                    style={{
-                      borderLeftColor: `hsl(var(${AGENT_ACCENT_VARS[run.agent_name] ?? "--border"}))`,
-                    }}
-                  >
-                    <CardHeader className="flex-row items-center justify-between flex-wrap gap-2 pb-2">
-                      <div className="flex items-center gap-2">
-                        <Bot className="h-4 w-4 text-muted-foreground" />
-                        <CardTitle className="text-sm">{AGENT_LABELS[run.agent_name] ?? run.agent_name}</CardTitle>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Clock className="h-3 w-3" /> {formatDate(run.started_at)}
-                        <Badge variant={run.status === "completed" ? "secondary" : "destructive"}>{run.status}</Badge>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="pt-0">
-                      <p className="text-xs text-muted-foreground mb-2">{run.input_summary}</p>
-                      <p className="text-sm leading-relaxed">{run.reasoning}</p>
-                      {run.can_ask_followup ? (
-                        <AgentRunFollowupPanel leadId={leadId!} agentRunId={run.id} />
-                      ) : (
-                        <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
-                          Follow-up questions aren't available for this run (it used the direct-Gemini
-                          fallback path, which has no TrueForge session to continue).
-                        </p>
-                      )}
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </AnimatePresence>
-            {traceLoading && (
-              <div className="flex flex-col gap-2" aria-busy="true" aria-live="polite">
-                <Skeleton className="h-20 w-full" />
-                <Skeleton className="h-20 w-full" />
-              </div>
-            )}
-            {!traceLoading && traceError && (
-              <Card>
-                <CardContent className="py-8 text-center text-sm text-muted-foreground">
-                  Couldn't load the agent trace.{" "}
-                  {traceError instanceof Error ? traceError.message : "Something went wrong contacting the server."}
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="mt-3 block mx-auto"
-                    onClick={() => queryClient.invalidateQueries({ queryKey: ["lead-trace", leadId] })}
-                  >
-                    Try again
-                  </Button>
-                </CardContent>
-              </Card>
-            )}
-            {!traceLoading && !traceError && (!trace || trace.length === 0) && (
-              <Card>
-                <CardContent className="py-8 text-center text-sm text-muted-foreground">
-                  No agent runs yet for this lead.
-                </CardContent>
-              </Card>
-            )}
-          </div>
+          <AgentTraceTab
+            trace={trace}
+            traceLoading={traceLoading}
+            traceError={traceError}
+            onRetry={() => queryClient.invalidateQueries({ queryKey: ["lead-trace", leadId] })}
+            leadId={leadId!}
+          />
         </TabsContent>
 
         <TabsContent value="history">
@@ -677,6 +545,7 @@ export function LeadDetailPage() {
             {classification_history.length === 0 && (
               <p className="text-sm text-muted-foreground">No classification history yet.</p>
             )}
+            <ConfidenceTrendChart history={classification_history} />
             {classification_history.map((c) => (
               <Card key={c.id} className={c.superseded_by_id ? "opacity-60" : ""}>
                 <CardContent className="py-4 flex items-center justify-between gap-4 flex-wrap">
