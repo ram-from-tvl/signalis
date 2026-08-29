@@ -1,0 +1,77 @@
+digraph Architecture {
+  rankdir=LR;
+  bgcolor="white";
+  fontname="Helvetica";
+  fontsize=13;
+  labelloc="t";
+  pad="0.3";
+  nodesep=0.45;
+  ranksep=0.75;
+  node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", color="#5a5850", fillcolor="#f7f5ee", penwidth=1.2, margin="0.18,0.12"];
+  edge [fontname="Helvetica", fontsize=9.5, color="#8a8676", fontcolor="#4a4840", penwidth=1.1, arrowsize=0.75];
+
+  subgraph cluster_client {
+    label="Client";
+    style="rounded";
+    color="#9a9688";
+    fontsize=12;
+    fontcolor="#3a3830";
+    FE [label="React + TypeScript frontend\n(TanStack Query, Radix/shadcn UI)"];
+  }
+
+  subgraph cluster_backend {
+    label="FastAPI backend";
+    style="rounded";
+    color="#9a9688";
+    fontsize=12;
+    fontcolor="#3a3830";
+    API [label="REST API\napp/api/routes"];
+    SVC [label="Services\ningestion · pipeline · ranking"];
+    SG [label="LangGraph StateGraph\napp/agents/graph.py"];
+    DB [label="SQLite\n(via SQLAlchemy)", shape=cylinder, fillcolor="#eef0e6"];
+  }
+
+  subgraph cluster_runtime {
+    label="Agent runtime";
+    style="rounded";
+    color="#9a9688";
+    fontsize=12;
+    fontcolor="#3a3830";
+    TF [label="TrueForge harness\n(local process — owns model calls,\nMCP tool discovery/execution,\ncontext management)", fillcolor="#f0ece0", penwidth=1.6];
+    subgraph cluster_mcp {
+      label="MCP servers";
+      style="dashed";
+      color="#b0ac9c";
+      fontsize=10.5;
+      fontcolor="#5a5850";
+      ENRICH [label="signalis-enrichment\nindustry / size classification"];
+      RESEARCH [label="signalis-research\nTavily web search"];
+      EXA [label="signalis-exa\nExa semantic search"];
+      HUNTER [label="signalis-hunter\nemail find / verify"];
+    }
+    SANDBOX [label="Daytona sandbox\nsignal-score computation\n(local fallback if unreachable)"];
+  }
+
+  subgraph cluster_providers {
+    label="LLM providers (TrueForge-registered)";
+    style="rounded";
+    color="#9a9688";
+    fontsize=12;
+    fontcolor="#3a3830";
+    HF [label="Hugging Face\n(qwen3-4b, up to 3 keys/models)\nPRIMARY", fillcolor="#e8ecdf", penwidth=1.4];
+    GEMINI [label="Gemini\n(gemini-3-6-flash)\nFALLBACK", fillcolor="#f7f0e6"];
+  }
+
+  FE -> API [label="HTTP / JSON"];
+  API -> SVC;
+  SVC -> SG [label="per lead"];
+  SVC -> DB [dir=both, arrowsize=0.6];
+  SG -> TF [label="session / turn\nper agent node"];
+  TF -> HF [label="try each configured\nkey/model in order"];
+  HF -> GEMINI [label="all HF attempts failed", style=dashed, color="#b06a3a", fontcolor="#8a4a20"];
+  TF -> ENRICH [style=dashed];
+  TF -> RESEARCH [style=dashed];
+  TF -> EXA [style=dashed];
+  TF -> HUNTER [style=dashed];
+  SG -> SANDBOX [label="signal scoring\n(Buying Stage node)"];
+}

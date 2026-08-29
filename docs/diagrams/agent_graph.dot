@@ -1,0 +1,73 @@
+digraph AgentGraph {
+  rankdir=TB;
+  bgcolor="white";
+  fontname="Helvetica";
+  pad="0.3";
+  nodesep=0.45;
+  ranksep=0.55;
+  compound=true;
+  node [fontname="Helvetica", fontsize=11, shape=box, style="rounded,filled", color="#5a5850", fillcolor="#f7f5ee", penwidth=1.2, margin="0.18,0.11"];
+  edge [fontname="Helvetica", fontsize=9.5, color="#8a8676", fontcolor="#4a4840", penwidth=1.1, arrowsize=0.7];
+
+  Start [label="Pipeline triggered for a lead", shape=oval, fillcolor="#eef0e6"];
+  SE [label="Signal Extraction Agent\n(TrueForge session)"];
+  PF [label="Persona Fit Agent\n(TrueForge session + MCP tools)", fillcolor="#f0ece0"];
+  BS [label="Buying Stage Orchestrator Agent\n(TrueForge session)"];
+  Decision [label="confidence below\nthreshold?", shape=diamond, fillcolor="#f7f0e6", fontsize=10];
+  OP [label="Outreach Planner Agent\n(TrueForge session)"];
+  EX [label="Explainability Agent\n(TrueForge session)"];
+  Persist [label="Persist stage_classification\n+ outreach_plan\n(both start pending_approval)", shape=cylinder, fillcolor="#eef0e6"];
+  Human [label="Marketer reviews\nin UI", shape=diamond, fillcolor="#f7f0e6", fontsize=10];
+  Approved [label="Classification / Plan\nmarked approved", fillcolor="#e6ecdc"];
+  Rejected [label="Classification / Plan\nmarked rejected", fillcolor="#f3ddd6"];
+
+  Start -> SE -> PF -> BS -> Decision;
+  Decision -> OP [label="  yes: pending_approval  /  no: auto_approved  ", fontsize=9];
+  OP -> EX -> Persist -> Human;
+  Human -> Approved [label="approve /\nedit + approve"];
+  Human -> Rejected [label="reject"];
+
+  ENRICH [label="signalis-enrichment (MCP)\nclassify_company_industry\nestimate_company_size_band", fillcolor="#f2efe4"];
+  RESEARCH [label="signalis-research (MCP)\nsearch_company_news\n(Tavily)", fillcolor="#f2efe4"];
+  EXA [label="signalis-exa (MCP)\nsearch_company_semantic\n(Exa)", fillcolor="#f2efe4"];
+  PF -> ENRICH [style=dashed, dir=both, constraint=false, label="  as needed  ", fontsize=9];
+  PF -> RESEARCH [style=dashed, dir=both, constraint=false, label="  as needed  ", fontsize=9];
+  PF -> EXA [style=dashed, dir=both, constraint=false, label="  as needed  ", fontsize=9];
+
+  Gate [label="Tool call\napproved?\n(only when enrichment\ntools are called)", shape=diamond, fillcolor="#f7f0e6", fontsize=10];
+  ToolApproval [label="Persist ToolApprovalRequest\nMarketer reviews in UI", shape=cylinder, fillcolor="#eef0e6"];
+  PFFailed [label="AgentRun\nmarked failed", fillcolor="#f3ddd6"];
+  Gate -> ToolApproval [label="pending:\nturn paused"];
+  ToolApproval -> PFFailed [label="reject:\nresume w/ deny"];
+  ENRICH -> Gate [constraint=false, label="call gated by\nrequire_approval_for_tools"];
+  ToolApproval -> PF [label="approve: resume turn,\nPersona Fit completes", constraint=false];
+
+  BS -> SB [label="scoring\ncomputation"];
+  SB [label="Daytona sandbox\nrecency/strength-weighted score\n(local fallback if unreachable)"];
+  SB -> BS [constraint=false];
+
+  OP -> HUNTER [style=dashed, dir=both, label="MCP tool call\n(as needed)", fontsize=9];
+  HUNTER [label="signalis-hunter MCP server\nfind_email / verify_email"];
+
+  subgraph cluster_ranking {
+    label="Prioritization / Ranking — separate flow, on demand";
+    style="rounded";
+    color="#9a9688";
+    fontsize=11;
+    fontcolor="#3a3830";
+    labelloc="t";
+    RankStart [label="Marketer clicks\nRank Pipeline", shape=oval, fillcolor="#eef0e6"];
+    Rank [label="Prioritization / Ranking Agent\n(TrueForge session — parallel\nsubagents, one per lead)"];
+    ClassStore [label="stage_classifications\n(non-superseded rows)", shape=cylinder, fillcolor="#eef0e6"];
+    RankPersist [label="Persist PipelineRanking\nsnapshot", shape=cylinder, fillcolor="#eef0e6"];
+    RankStart -> Rank;
+    ClassStore -> Rank;
+    Rank -> RankPersist;
+  }
+
+  { rank=same; PF; ENRICH; RESEARCH; }
+  { rank=same; BS; EXA; SB; Gate; }
+  { rank=same; Decision; ToolApproval; }
+  { rank=same; OP; PFFailed; }
+  { rank=same; EX; HUNTER; }
+}

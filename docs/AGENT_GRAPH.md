@@ -12,38 +12,11 @@ is what decides node order and evaluates the one real conditional edge (the
 confidence-threshold branch), while TrueForge is what each individual node
 actually runs on.
 
-```mermaid
-flowchart TD
-    Start([Pipeline triggered for a lead]) --> SE["Signal Extraction Agent\n(TrueForge session)"]
-    SE --> PF["Persona Fit Agent\n(TrueForge session + MCP tools)"]
-    PF -->|"MCP tool calls\n(gated by require_approval_for_tools)"| Gate{Tool call approved?}
-    Gate -->|"pending: turn paused"| ToolApproval[(Persist ToolApprovalRequest\nMarketer reviews in UI)]
-    ToolApproval -->|approve: resume turn| MCP[["signalis-enrichment MCP server\nclassify_company_industry\nestimate_company_size_band"]]
-    ToolApproval -->|reject: resume w/ deny| PFFailed[AgentRun marked failed]
-    MCP --> PF
-    PF -->|"MCP tool call (as needed)"| RESEARCH[["signalis-research MCP server\nsearch_company_news (Tavily)"]]
-    RESEARCH --> PF
-    PF -->|"MCP tool call (as needed)"| EXA[["signalis-exa MCP server\nsearch_company_semantic (Exa)"]]
-    EXA --> PF
-    PF --> BS["Buying Stage Orchestrator Agent\n(TrueForge session)"]
-    BS -->|"scoring computation"| SB[["Daytona sandbox\nrecency/strength-weighted score"]]
-    SB --> BS
-    BS --> Decision{confidence below threshold?}
-    Decision -->|yes, low confidence| OP["Outreach Planner Agent\n(TrueForge session)"]
-    Decision -->|no, high confidence| OP
-    OP -->|"MCP tool call (as needed)"| HUNTER[["signalis-hunter MCP server\nfind_email / verify_email"]]
-    HUNTER --> OP
-    OP --> EX["Explainability Agent\n(TrueForge session)"]
-    EX --> Persist[(Persist stage_classification + outreach_plan\nboth start pending_approval)]
-    Persist --> Human{Marketer reviews in UI}
-    Human -->|approve| Approved[Classification / Plan marked approved]
-    Human -->|reject| Rejected[Classification / Plan marked rejected]
-    Human -->|edit touchpoints, then approve| Approved
+![Signalis agent graph: five-node per-lead pipeline plus the standalone Prioritization/Ranking agent](diagrams/agent_graph.svg)
 
-    RankStart([Marketer clicks Rank Pipeline]) --> Rank["Prioritization/Ranking Agent\n(TrueForge session)"]
-    ClassStore[(stage_classifications\nnon-superseded rows)] --> Rank
-    Rank --> RankPersist[(Persist PipelineRanking snapshot)]
-```
+Source: [`diagrams/agent_graph.dot`](diagrams/agent_graph.dot) (Graphviz —
+regenerate with `dot -Tsvg diagrams/agent_graph.dot -o diagrams/agent_graph.svg`
+after editing).
 
 Every "TrueForge session" box falls back to a direct Gemini call, and then
 to a Hugging Face model, if TrueForge is not running or a turn fails — see
