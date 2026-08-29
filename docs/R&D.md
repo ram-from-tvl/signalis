@@ -1,5 +1,14 @@
 # Expanding Signalis: Real MCP Servers & Tool Integrations for a B2B Buying-Signal + Outreach Agent
 
+> **Status note:** this is the research memo that led to the work below —
+> kept as-is rather than edited after the fact, since it's a point-in-time
+> research artifact. Of Phase 1's three recommendations, **Exa MCP** and
+> **Hunter.io MCP** are now shipped (`app/mcp_tools/exa_server.py`,
+> `app/mcp_tools/hunter_server.py`, attached to Persona Fit and Outreach
+> Planner respectively — see `docs/AGENT_GRAPH.md`). Apollo.io, and every
+> item in Phase 2/3, remain unimplemented and still describe genuine
+> future work.
+
 ## TL;DR
 - **The MCP ecosystem is now mature enough to make Signalis feel like a real product:** first-party, OAuth-based remote MCP servers now exist from HubSpot (GA April 2026), Salesforce, Attio, Pipedrive (GA June 2026), Apollo.io, Hunter.io, Slack, Exa, and Tavily — most connect to TrueForge as remote servers with header-auth or OAuth, and several have genuine free tiers.
 - **The highest "wow-per-friction" additions are:** Apollo.io (free-tier prospecting + enrichment + sequences), Hunter.io (free email discovery/verification), Exa (neural/semantic search with recurring free credits), Attio (free, fully OAuth CRM read/write), Tavily (already integrated), and an aggregator (Composio or Klavis) to add Gmail/Calendar/Slack breadth via one endpoint.

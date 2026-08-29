@@ -16,14 +16,30 @@ src/
                     (dashboardApi, leadsApi, rankingApi, ...).
   components/
     ui/             shadcn-pattern primitives built on Radix (badge,
-                     button, card, dialog, select, tabs, toast, ...) —
+                     button, card, dialog, select, tabs, toast, tooltip,
+                     accordion, hover-card, key-value-builder, ...) —
                      owned in this codebase, not an installed package.
     layout/          AppShell: navigation and page frame.
-    leads/           Domain-specific presentational components
-                     (StageBadge, ConfidenceMeter, AgentRunFollowupPanel).
+    leads/           Domain-specific presentational components — StageBadge,
+                     ConfidenceMeter, PipelineProgressPanel (live per-agent
+                     run status), AgentTraceTab (collapsible chain-of-thought
+                     accordion with a per-agent icon mini-timeline),
+                     SignalHistoryTab (deduped, icon-coded signal timeline),
+                     ConfidenceTrendChart (confidence-over-time sparkline),
+                     ApprovePlanButton (confirm-on-click approval),
+                     LeadAvatar (deterministic per-lead initials),
+                     AgentRunFollowupPanel.
   pages/            One file per application screen: Dashboard, Lead
                     Pipeline, Lead Detail, Data Sources, Setup.
-  lib/utils.ts      cn() class-merge helper.
+  lib/
+    utils.ts        cn() class-merge helper, parseUtcTimestamp() (backend
+                    timestamps arrive without a timezone marker and must be
+                    parsed as UTC, not local time).
+    agents.ts       Single source of truth for the 5-agent pipeline's
+                    display metadata — order, labels, accent colors, icons,
+                    and running-state insight text — shared between the
+                    Agent Trace tab and the live progress panel.
+    useCountUp.ts   Hook animating a stat tile's number up from 0 on load.
   types/api.ts      TypeScript interfaces mirroring the backend's Pydantic
                     schemas.
   index.css         Design tokens (CSS custom properties) and global

@@ -74,9 +74,15 @@ lead — updating its understanding automatically whenever new signals arrive.
   further. Google Gemini (`gemini-3.6-flash` by default, configurable via
   `GEMINI_MODEL`) is registered as the final fallback provider (also
   supporting up to two keys via `GEMINI_API_KEY`/`GEMINI_API_KEY_1`, with the
-  same rotation). If every TrueForge-registered provider/key fails, or
-  TrueForge itself is not running, the same call falls back to a direct HF
-  call (with the same key rotation) and then a direct Gemini call — so the
+  same rotation). Three tiers of fallback exist end to end: `run_agent_reasoning`
+  (`app/agents/common.py`) first tries every TrueForge-registered model in
+  order (`Settings.trueforge_models`: `TRUEFORGE_MODEL`, `TRUEFORGE_MODEL_1`,
+  `TRUEFORGE_MODEL_2`, then `TRUEFORGE_MODEL_FALLBACK`) — skipping the
+  rotation only if a turn already executed real side effects (an MCP tool
+  call, a subagent fan-out) before failing, so a retry never repeats them
+  (`TrueForgeTurnExecutedError`). If every TrueForge-registered model fails,
+  or TrueForge itself is not running, the same call falls back to a direct
+  HF call (with the same key rotation) and then a direct Gemini call — so the
   pipeline still produces real model reasoning even if the TrueForge sidecar
   or every registered provider is briefly unavailable. No agent's reasoning
   is hardcoded or templated at any layer of this fallback chain — every
@@ -144,11 +150,20 @@ backend/
 frontend/
   src/
     api/           typed API client
-    components/    ui/ (shadcn-pattern primitives), layout/, leads/
-    pages/         the six application screens
+    components/    ui/ (shadcn-pattern primitives — badge, button, card,
+                   dialog, select, tabs, toast, tooltip, accordion,
+                   hover-card, key-value-builder, ...), layout/, leads/
+                   (per-lead views: AgentTraceTab, SignalHistoryTab,
+                   ConfidenceTrendChart, ApprovePlanButton, LeadAvatar,
+                   PipelineProgressPanel, AgentRunFollowupPanel,
+                   StageBadge, ConfidenceMeter), dashboard/, setup/
+    lib/           cn() className helper, agents.ts (shared agent display
+                   metadata), useCountUp.ts (stat-tile animation)
+    pages/         the five application screens
     types/         shared TypeScript types matching the backend schemas
 docs/              architecture, agent graph, data schema, API reference,
-                   time-savings writeup
+                   time-savings writeup, design decisions, diagrams/
+                   (Graphviz source + rendered SVGs)
 .github/           CI workflow, PR template, issue templates
 CONTRIBUTING.md    development workflow and code review process
 CODE_OF_CONDUCT.md community standards
@@ -213,6 +228,13 @@ HUNTER_API_KEY=your-hunter-api-key
 TRUEFORGE_URL=http://localhost:8790
 TRUEFORGE_ENABLED=true
 TRUEFORGE_MODEL=huggingface/qwen3-4b
+# Optional: additional TrueForge-registered models to try, in order, before
+# falling back to the direct HF/Gemini path — each normally backed by a
+# distinct HF key/provider so one key's quota running out rotates to the
+# next registered model rather than failing the turn
+TRUEFORGE_MODEL_1=huggingface-2/qwen3-4b
+TRUEFORGE_MODEL_2=huggingface-3/qwen3-4b
+TRUEFORGE_MODEL_FALLBACK=google-gemini/gemini-3-6-flash
 ```
 
 ### 2. Start the TrueForge agent harness

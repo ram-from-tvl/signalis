@@ -49,11 +49,22 @@ app/
   mcp_tools/
     enrichment_server.py
                  Remote MCP server exposing firmographic enrichment tools,
-                 called by the Persona Fit agent through TrueForge.
+                 called by the Persona Fit agent through TrueForge. Its two
+                 tools (classify_company_industry, estimate_company_size_band)
+                 are gated by TrueForge's require_approval_for_tools.
     research_server.py
                  Remote MCP server exposing search_company_news, a live
                  Tavily-backed web-research tool, called by the Persona Fit
                  agent through TrueForge alongside the enrichment tools.
+    exa_server.py
+                 Remote MCP server exposing search_company_semantic, a live
+                 Exa-backed semantic web-research tool — a differently-
+                 sourced complement to Tavily, also attached to Persona Fit.
+    hunter_server.py
+                 Remote MCP server exposing find_email/verify_email via
+                 Hunter.io, attached to the Outreach Planner agent so a
+                 generated plan records whether the lead's email is
+                 actually deliverable.
   models/        SQLAlchemy ORM models, one module per domain entity,
                  re-exported from __init__.py.
   schemas/       Pydantic request/response schemas, one module per domain,
@@ -62,8 +73,9 @@ app/
                  orchestration), ranking.py (prioritization orchestration).
   main.py        FastAPI app instantiation, CORS, lifespan startup hook.
 data/            Bundled sample CRM CSV and website events JSON.
-tests/           pytest suite — unit, API, and one real-Gemini integration
-                 test (marked `integration`, skipped by default).
+tests/           pytest suite — unit, API, and one real-LLM integration
+                 test (marked `integration`, skipped by default; needs
+                 HF_TOKEN or GEMINI_API_KEY).
 ```
 
 ## Setup
@@ -91,7 +103,7 @@ The API is served at `http://localhost:8000`, with interactive docs at
 
 ```bash
 pytest -m "not integration" -q      # fast, LLM calls mocked
-pytest -m integration -q            # real end-to-end Gemini call, needs GEMINI_API_KEY
+pytest -m integration -q            # real end-to-end LLM call, needs HF_TOKEN or GEMINI_API_KEY
 ```
 
 ## Linting
