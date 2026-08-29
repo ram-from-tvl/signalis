@@ -28,6 +28,54 @@ once a `1.0.0` tag is cut.
   `backend/requirements.txt`; CI now installs from the pinned lockfile
   instead of an unconstrained or hardcoded dependency list.
 
+## [0.6.0] — Live pipeline progress and readable signal detail
+
+### Changed
+- Replaced the disabled-button-only "Running agents..." state with a live
+  per-agent progress panel (`PipelineProgressPanel.tsx`) that polls the
+  existing agent trace endpoint while a pipeline run is in flight: each of
+  the five agents shows pending/running/completed/failed status, a real
+  one-line description of what it's doing while running, and a genuine
+  result summary (classified stage/confidence, persona fit, touchpoint
+  count, signal count) the instant it completes (#17).
+- Gave the bulk "Run Pipeline for All Leads" action an equivalent
+  indeterminate progress bar with rotating agent-name status text, since
+  it spans many leads at once rather than one traceable run (#17).
+- Replaced the raw `JSON.stringify(signal.raw_payload)` dump in Signal
+  History with labeled, readable detail lines, filtering out fields
+  already shown elsewhere in the row (#17).
+- Swapped the type pairing from Instrument Serif + Instrument Sans to DM
+  Serif Display + Plus Jakarta Sans (#17).
+- Centralized agent display metadata (`lib/agents.ts`) — order, labels,
+  accent colors, running-state insight text — previously duplicated inline
+  in `LeadDetailPage.tsx` (#17).
+
+### Fixed
+- Backend timestamps serialized without a timezone marker (Python's
+  `datetime.utcnow()`) were being parsed by the browser as local time
+  instead of UTC, silently shifting every displayed timestamp in the app
+  by the browser's UTC offset. Fixed with a shared `parseUtcTimestamp`
+  helper applied everywhere a backend timestamp is formatted (#17).
+
+## [0.5.0] — Visual polish pass
+
+### Changed
+- Added an ambient, very-low-opacity gradient-mesh background across the
+  app shell (respects `prefers-reduced-motion`), animated sliding
+  indicators for the sidebar nav and Lead Detail tabs, and richer
+  button hover/press feedback using the existing shadow token scale (#16).
+- Data Sources: real drag-and-drop upload zones (with click-to-browse
+  fallback) and a new "Pipeline at a glance" 3-step explainer, reusing the
+  existing timeline pattern from Lead Detail (#16).
+- Dashboard stat tiles gained an animated count-up on load and hover lift;
+  empty states across pages now use a consistent icon-in-circle treatment
+  (#16).
+- Setup page's channel selection reworked from plain checkboxes into
+  pill-style toggle chips, matching the badge visual language already used
+  elsewhere on the page (#16).
+- Added a small click-spark micro-interaction on the two human-approval
+  actions (Approve Plan, Approve Classification) (#16).
+
 ## [0.4.0] — UI redesign
 
 ### Changed

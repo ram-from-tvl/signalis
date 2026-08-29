@@ -6,42 +6,11 @@ piece, see the linked document.
 
 ## System diagram
 
-```mermaid
-flowchart LR
-    subgraph Client
-        FE[React + TypeScript frontend]
-    end
+![Signalis system architecture: client, FastAPI backend, agent runtime, and LLM providers](diagrams/architecture.svg)
 
-    subgraph Backend["FastAPI backend"]
-        API[REST API<br/>app/api/routes]
-        SVC[Services<br/>ingestion, pipeline, ranking]
-        GRAPH[LangGraph StateGraph<br/>app/agents/graph.py]
-        DB[(SQLite<br/>via SQLAlchemy)]
-    end
-
-    subgraph Runtime["Agent runtime"]
-        TF[TrueForge harness<br/>local process]
-        MCP[Enrichment MCP server]
-        RESEARCH[Research MCP server<br/>Tavily web search]
-        SANDBOX[Daytona sandbox]
-    end
-
-    subgraph Providers["LLM providers"]
-        GEMINI[Gemini]
-        HF[Hugging Face fallback]
-    end
-
-    FE -->|HTTP/JSON| API
-    API --> SVC
-    SVC --> GRAPH
-    SVC --> DB
-    GRAPH -->|session/turn| TF
-    TF --> GEMINI
-    TF -.fallback.-> HF
-    TF --> MCP
-    TF --> RESEARCH
-    GRAPH -->|signal scoring| SANDBOX
-```
+Source: [`diagrams/architecture.dot`](diagrams/architecture.dot) (Graphviz —
+regenerate with `dot -Tsvg diagrams/architecture.dot -o diagrams/architecture.svg`
+after editing).
 
 ## Request flow, end to end
 
