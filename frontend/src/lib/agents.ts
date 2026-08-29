@@ -1,6 +1,7 @@
 // Single source of truth for the 5-agent pipeline's display metadata —
 // shared between the Agent Trace tab and the live PipelineProgressPanel so
 // labels/colors/order never drift between the two.
+import { Radar, UserCheck, Gauge, Send, MessageSquareText, type LucideIcon } from "lucide-react"
 
 export const AGENT_ORDER = [
   "signal_extraction",
@@ -26,6 +27,17 @@ export const AGENT_ACCENT_VARS: Record<string, string> = {
   buying_stage_orchestrator: "--agent-buying-stage",
   outreach_planner: "--agent-outreach-planner",
   explainability: "--agent-explainability",
+}
+
+// One distinct icon per agent role, learned once and then recognizable
+// without reading text — used in the Agent Trace mini-timeline and
+// per-step headers.
+export const AGENT_ICONS: Record<string, LucideIcon> = {
+  signal_extraction: Radar,
+  persona_fit: UserCheck,
+  buying_stage_orchestrator: Gauge,
+  outreach_planner: Send,
+  explainability: MessageSquareText,
 }
 
 // What each agent is actually doing while its status is "running" — shown

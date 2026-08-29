@@ -9,11 +9,13 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
+import { LeadAvatar } from "@/components/leads/LeadAvatar"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Input } from "@/components/ui/input"
 import { useToast } from "@/components/ui/toast-context"
 import { AGENT_ORDER, AGENT_LABELS } from "@/lib/agents"
 import { parseUtcTimestamp } from "@/lib/utils"
-import { Sparkles, ArrowUpDown, Users, Loader2 } from "lucide-react"
+import { Sparkles, ArrowUpDown, Users, Loader2, Search } from "lucide-react"
 import { motion } from "motion/react"
 
 type SortKey = "name" | "confidence" | "created_at"
@@ -42,6 +44,7 @@ export function LeadPipelinePage() {
 
   const [stageFilter, setStageFilter] = useState<Stage | "all">("all")
   const [sortKey, setSortKey] = useState<SortKey>("created_at")
+  const [search, setSearch] = useState("")
 
   const runPipeline = useMutation({
     mutationFn: (leadIds?: string[]) => pipelineApi.run(leadIds),
@@ -69,6 +72,15 @@ export function LeadPipelinePage() {
     if (stageFilter !== "all") {
       items = items.filter((item) => item.latest_classification?.stage === stageFilter)
     }
+    const query = search.trim().toLowerCase()
+    if (query) {
+      items = items.filter(
+        (item) =>
+          item.lead.name.toLowerCase().includes(query) ||
+          item.lead.company.toLowerCase().includes(query) ||
+          (item.lead.title ?? "").toLowerCase().includes(query)
+      )
+    }
     items.sort((a, b) => {
       if (sortKey === "name") return a.lead.name.localeCompare(b.lead.name)
       if (sortKey === "confidence")
@@ -76,7 +88,7 @@ export function LeadPipelinePage() {
       return parseUtcTimestamp(b.lead.created_at).getTime() - parseUtcTimestamp(a.lead.created_at).getTime()
     })
     return items
-  }, [leads, stageFilter, sortKey])
+  }, [leads, stageFilter, sortKey, search])
 
   return (
     <div className="flex flex-col gap-6 pb-12">
@@ -117,6 +129,16 @@ export function LeadPipelinePage() {
       )}
 
       <div className="flex flex-wrap items-center gap-3">
+        <div className="relative w-full sm:w-64">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search by name, company, title..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-8"
+            aria-label="Search leads"
+          />
+        </div>
         <Select value={stageFilter} onValueChange={(v) => setStageFilter(v as Stage | "all")}>
           <SelectTrigger className="w-40">
             <SelectValue placeholder="Filter by stage" />
@@ -158,14 +180,37 @@ export function LeadPipelinePage() {
         </div>
       )}
 
-      {!isLoading && filteredSorted.length === 0 && (
+      {!isLoading && filteredSorted.length === 0 && (leads?.length ?? 0) > 0 && (
+        <Card>
+          <CardContent className="py-12 flex flex-col items-center text-center gap-3">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent/10 text-accent">
+              <Search className="h-6 w-6" />
+            </div>
+            <p className="text-sm text-muted-foreground max-w-sm">
+              No leads match "{search}"{stageFilter !== "all" ? ` in the ${stageFilter} stage` : ""}.
+            </p>
+            <Button
+              variant="outline"
+              className="mt-1"
+              onClick={() => {
+                setSearch("")
+                setStageFilter("all")
+              }}
+            >
+              Clear filters
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {!isLoading && (leads?.length ?? 0) === 0 && (
         <Card>
           <CardContent className="py-12 flex flex-col items-center text-center gap-3">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-accent/10 text-accent">
               <Users className="h-6 w-6" />
             </div>
             <p className="text-sm text-muted-foreground max-w-sm">
-              No leads match this view yet. Head to Data Sources to upload or load the sample dataset.
+              No leads loaded yet. Head to Data Sources to upload or load the sample dataset.
             </p>
             <Button asChild variant="outline" className="mt-1">
               <Link to="/data">Go to Data Sources</Link>
@@ -184,7 +229,8 @@ export function LeadPipelinePage() {
           >
             <Link to={`/leads/${item.lead.id}`}>
               <Card className="hover:border-accent/50 hover:shadow-raised transition-[border-color,box-shadow] duration-200">
-                <CardContent className="py-4 flex flex-col md:flex-row md:items-center gap-3 md:gap-6">
+                <CardContent className="py-4 flex flex-col md:flex-row md:items-center gap-3 md:gap-4">
+                  <LeadAvatar name={item.lead.name} className="hidden sm:flex" />
                   <div className="flex-1 min-w-0">
                     <p className="font-heading font-semibold truncate">{item.lead.name}</p>
                     <p className="text-sm text-muted-foreground truncate">
