@@ -28,6 +28,63 @@ once a `1.0.0` tag is cut.
   `backend/requirements.txt`; CI now installs from the pinned lockfile
   instead of an unconstrained or hardcoded dependency list.
 
+## [0.8.0] — Chain-of-thought agent trace and bento dashboard
+
+### Changed
+- Agent Trace was a repeated wall of always-expanded paragraph text with no
+  per-step icon or duration; rebuilt as a collapsible chain-of-thought
+  accordion (`AgentTraceTab.tsx`, most recent step expanded by default)
+  with a per-agent icon mini-timeline and real per-step latency, sourced
+  from already-persisted trace data (#19).
+- Classification History's confidence trend (a lead genuinely heating up
+  or cooling off across runs) was invisible in a flat list; added a
+  sparkline (`ConfidenceTrendChart.tsx`) showing the trend with the
+  biggest confidence jump annotated (#19).
+- Signal History showed exact-duplicate CRM rows as separate entries and
+  mislabeled "CRM" as "Crm"; duplicates are now grouped with a real count,
+  each event type has its own icon, and raw-source labels are explicit
+  (`SignalHistoryTab.tsx`) (#19).
+- Outreach Plan's "Approve Plan" fired on a single unconfirmed click
+  despite the product's core safety pitch being human approval; added a
+  confirm-on-click beat (`ApprovePlanButton.tsx`), numbered touchpoints,
+  and a distinct destructive alert when the lead's email genuinely won't
+  deliver, not just uncertain (#19).
+- Dashboard's best number (17x faster than manual) was a tiny sliver on a
+  0-1600 axis next to a dominant gray bar; pulled into its own large hero
+  cell in a bento-style grid. Priority Queue confidence bars were missing
+  their percentage (inconsistent with every other screen); fixed. The
+  delegation status badge showed raw internal vocabulary
+  ("Not delegated (fallback reasoning)"); rewritten in plain language with
+  the mechanism explained on hover instead of in the primary copy (#19).
+- Persona & Solution's Custom Traits field was a raw JSON textarea for a
+  non-technical marketer; replaced with a row-based key/value builder
+  (`key-value-builder.tsx`) that never shows a brace (#19).
+- Data Sources' step connector line stopped short of the last step; fixed
+  the CSS. Raw localhost/docs URLs are now tucked behind a collapsed
+  "Developer info" disclosure (#19).
+- Lead Pipeline gained a real search input and per-lead avatar initials
+  (`LeadAvatar.tsx`) (#19).
+
+### Fixed
+- `Badge` did not forward refs, which broke any `asChild` usage (e.g.
+  inside a `HoverCard` trigger) with a React warning (#19).
+
+## [0.7.0] — Documentation catch-up and clean diagrams
+
+### Changed
+- Replaced the two mermaid diagrams (system architecture, agent graph)
+  with clean, detailed Graphviz SVG renders (`docs/diagrams/`), checked in
+  alongside their `.dot` source for future edits (#18).
+- Added missing `CHANGELOG.md` entries for the two prior merged PRs
+  (visual polish, live pipeline progress) that had been left undocumented
+  (#18).
+
+### Fixed
+- The architecture diagram had drifted stale: it showed Gemini as the
+  primary LLM provider with Hugging Face as fallback — the reverse of
+  actual behavior — and was missing the multi-key/multi-model rotation
+  and two of the four MCP servers (Exa, Hunter.io) (#18).
+
 ## [0.6.0] — Live pipeline progress and readable signal detail
 
 ### Changed

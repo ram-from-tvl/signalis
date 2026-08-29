@@ -223,6 +223,7 @@ single lead — one row represents one ranking pass over the whole pipeline.
 | agent_run_id | FK -> agent_runs.id, nullable | the ranking agent's own audit-trail row (`agent_runs.lead_id` is NULL for this run) |
 | ranked_leads | JSON | list of `{lead_id, rank, reasoning, name, company, title, stage, confidence}`, one entry per currently-classified lead |
 | summary | text | one-paragraph narrative explaining the overall priority order |
+| subagent_delegation | JSON, nullable | `{status, used, subagent_count, expected_count, subagents}` — real evidence of whether this ranking run genuinely delegated per-lead assessment to parallel TrueForge subagents (`status`: `delegated` / `partial` / `evidence_unavailable` / `not_delegated`), read back from TrueForge's own session events rather than the model's self-report. See `app.agents.prioritization.run_prioritization`. |
 | created_at | datetime | |
 
 Each `ranked_leads` entry is a self-contained snapshot, not a pointer to

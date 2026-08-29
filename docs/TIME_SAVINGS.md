@@ -28,13 +28,17 @@ recorded in the database, and `agent_seconds_per_lead_actual` multiplies that
 by 5 (one call per agent in the pipeline: Signal Extraction, Persona Fit,
 Buying Stage Orchestrator, Outreach Planner, Explainability).
 
-In practice, a single Gemini call in this pipeline (`gemini-2.5-flash`,
-structured JSON output) completes in roughly 5-12 seconds depending on
-prompt size and model load, putting the full five-agent pipeline for one
-lead at **well under one minute**, typically in the 30-60 second range for a
-lead with a non-trivial signal history. This number will differ slightly
-run to run since it depends on live model latency, which is exactly why it
-is measured from real timestamps rather than hardcoded.
+In practice, a single call in this pipeline — Hugging Face's
+`Qwen/Qwen3-4B-Instruct-2507` by default, the primary provider, with
+`gemini-3.6-flash` as the configured Gemini fallback — completes in
+roughly 5-30 seconds depending on prompt size, tool calls made, and
+provider load, putting the full five-agent pipeline for one lead typically
+in the 1-4 minute range for a lead with a non-trivial signal history and
+genuine MCP tool use. This number will differ run to run since it depends
+on live model latency (and, when a provider is briefly rate-limited or out
+of quota, on how many models/keys the call had to rotate through before
+succeeding — see `docs/DECISIONS.md`), which is exactly why it is measured
+from real timestamps rather than hardcoded.
 
 ## The comparison
 

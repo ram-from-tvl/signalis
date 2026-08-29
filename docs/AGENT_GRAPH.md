@@ -18,12 +18,15 @@ Source: [`diagrams/agent_graph.dot`](diagrams/agent_graph.dot) (Graphviz —
 regenerate with `dot -Tsvg diagrams/agent_graph.dot -o diagrams/agent_graph.svg`
 after editing).
 
-Every "TrueForge session" box falls back to a direct Gemini call, and then
-to a Hugging Face model, if TrueForge is not running or a turn fails — see
-`docs/DECISIONS.md` for the fallback chain and why it exists. The
-Prioritization/Ranking Agent (bottom of the diagram) runs independently of
-the per-lead pipeline above it — it is triggered separately and reads across
-all leads at once rather than being a node in the per-lead graph.
+Every "TrueForge session" box first tries every TrueForge-registered model
+in order (`Settings.trueforge_models`), then — only if every one of those
+fails, or TrueForge is not running — falls back to a direct Hugging Face
+call, and then to Gemini, matching Hugging Face's status as the primary
+provider (see `docs/DECISIONS.md` for the fallback chain and why it
+exists). The Prioritization/Ranking Agent (bottom of the diagram) runs
+independently of the per-lead pipeline above it — it is triggered
+separately and reads across all leads at once rather than being a node in
+the per-lead graph.
 
 The tool-approval gate on Persona Fit's MCP calls only fires when the model
 actually decides to call `classify_company_industry` or
@@ -139,16 +142,26 @@ was used instead, since that path never creates a TrueForge session — see
 "Follow-up questions on an agent run's own reasoning" below for what that
 persisted session id is actually for.
 
-If TrueForge is disabled (`TRUEFORGE_ENABLED=false`) or unreachable, the same
-call falls back to a direct Gemini call and then a Hugging Face call
-(`app/core/llm.py`), using the identical prompt and schema — this is a
-transport fallback, not a second reasoning path. Because the direct fallback
-has no MCP tool access, any tool-referencing instruction (Persona Fit's) is
-rewritten for that path specifically to tell the model no tools are
-available, rather than leaving it to try invoking tools that do not exist
-in that call. The same fallback also has no access to TrueForge **skills**
-(Outreach Planner's) — `run_agent_reasoning` accepts an optional
-`fallback_style_guidance` string appended to the fallback instruction
+Before falling back to a direct model call at all, `run_agent_reasoning`
+(`app/agents/common.py`) tries every TrueForge-registered model in order
+(`Settings.trueforge_models`: the primary HF model, then any additional
+configured HF keys' models, then the Gemini fallback model) — a
+pre-execution failure (registration, session/turn creation, transport)
+rotates to the next model; a failure *after* the turn genuinely executed
+(real MCP tool calls or subagent delegation already happened) does not
+rotate, to avoid repeating those side effects, and falls straight to the
+direct path instead (`TrueForgeTurnExecutedError`). Only if every
+TrueForge-registered model fails, or TrueForge is disabled
+(`TRUEFORGE_ENABLED=false`) or unreachable, does the same call fall back to
+a direct Hugging Face call and then a direct Gemini call (`app/core/llm.py`),
+using the identical prompt and schema — this is a transport fallback, not a
+second reasoning path. Because the direct fallback has no MCP tool access,
+any tool-referencing instruction (Persona Fit's) is rewritten for that path
+specifically to tell the model no tools are available, rather than leaving
+it to try invoking tools that do not exist in that call. The same fallback
+also has no access to TrueForge **skills** (Outreach Planner's) —
+`run_agent_reasoning` accepts an optional `fallback_style_guidance` string
+appended to the fallback instruction
 specifically for this case, mirroring the tool-stripping precedent, so a
 prompt whose craft guidance now lives entirely in a skill doesn't silently
 lose that guidance on the fallback path.
