@@ -60,6 +60,17 @@ def extract_tools_used(session_id: str | None, tool_names: set[str]) -> dict:
         name = entry["tool_name"]
         if name in seen:
             continue
+        result = entry.get("result")
+        # Tools with a real external dependency (search_company_news via
+        # Tavily, search_company_semantic via Exa — same convention as
+        # verify_email) report queried=False on transport/config/malformed-
+        # response failure rather than raising; a call is only genuine
+        # activity if it actually reached the external service. Tools with
+        # no "queried" key (classify_company_industry,
+        # estimate_company_size_band) are always-local/deterministic and
+        # have no such failure mode, so their mere presence is enough.
+        if isinstance(result, dict) and result.get("queried") is False:
+            continue
         seen.add(name)
         used.append({"tool": name, "label": TOOL_LABELS.get(name, name)})
     return {"items": used, "evidence_unavailable": False}

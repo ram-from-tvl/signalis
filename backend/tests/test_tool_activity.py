@@ -63,6 +63,35 @@ def test_extract_tools_used_genuinely_empty_is_not_evidence_unavailable():
     assert used == {"items": [], "evidence_unavailable": False}
 
 
+def test_extract_tools_used_excludes_calls_that_failed_to_query():
+    """search_company_news/search_company_semantic report queried=False on
+    transport/config/malformed-response failure (same convention as
+    verify_email) rather than raising — a call that reached the tool but
+    never actually reached Tavily/Exa must not be reported as a genuine
+    external check."""
+    tool_results = [
+        {
+            "tool_name": "search_company_news",
+            "result": {"results": [], "queried": False, "reason": "TAVILY_API_KEY is not configured"},
+        },
+        {"tool_name": "classify_company_industry", "result": {"industry": "SaaS"}},
+    ]
+    with patch("app.agents.tool_activity.get_tool_call_results", return_value=tool_results):
+        used = extract_tools_used("session-abc", {"search_company_news", "classify_company_industry"})
+
+    assert used["items"] == [{"tool": "classify_company_industry", "label": TOOL_LABELS["classify_company_industry"]}]
+
+
+def test_extract_tools_used_includes_calls_that_succeeded_with_queried_true():
+    tool_results = [
+        {"tool_name": "search_company_news", "result": {"results": [{"title": "x"}], "queried": True}},
+    ]
+    with patch("app.agents.tool_activity.get_tool_call_results", return_value=tool_results):
+        used = extract_tools_used("session-abc", {"search_company_news"})
+
+    assert used["items"] == [{"tool": "search_company_news", "label": TOOL_LABELS["search_company_news"]}]
+
+
 def test_tool_label_falls_back_to_raw_name_for_unrecognized_tools():
     assert tool_label("some_future_tool") == "some_future_tool"
 

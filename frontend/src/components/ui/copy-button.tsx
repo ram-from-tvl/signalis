@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Copy, Check, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/components/ui/toast-context"
@@ -24,6 +24,19 @@ export function CopyButton({
 }) {
   const { push } = useToast()
   const [state, setState] = useState<"idle" | "copied" | "failed">("idle")
+  const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // A rapid second click must not let its own reset timer get clobbered by
+  // the first click's still-pending one (or vice versa) — always clear
+  // whatever's scheduled before scheduling the next reset.
+  useEffect(() => () => {
+    if (resetTimer.current) clearTimeout(resetTimer.current)
+  }, [])
+
+  const scheduleReset = () => {
+    if (resetTimer.current) clearTimeout(resetTimer.current)
+    resetTimer.current = setTimeout(() => setState("idle"), 1500)
+  }
 
   const handleCopy = async () => {
     try {
@@ -37,7 +50,7 @@ export function CopyButton({
         variant: "error",
       })
     } finally {
-      setTimeout(() => setState("idle"), 1500)
+      scheduleReset()
     }
   }
 
