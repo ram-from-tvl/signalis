@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="image1.png" alt="Signalis Logo" width="500">
+  <img src="assets/github_banner.png" alt="Signalis Logo" width="500">
 </p>
 
 # Signalis
