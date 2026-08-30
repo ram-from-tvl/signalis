@@ -32,6 +32,72 @@ send — re-running automatically whenever new signals arrive.
 | LLM providers | Hugging Face Inference Providers (primary) → Gemini (fallback), multi-key rotation |
 | Frontend | React 18, Vite, TypeScript, Tailwind, TanStack Query, Radix-based UI kit |
 
+## Diagrams
+
+### System Architecture
+
+> How the browser, API, agent runtime, LLM providers, MCP servers, and sandboxed execution fit together.
+
+<p align="center">
+  <img src="docs/diagrams/system_architecture.svg" alt="Signalis system architecture diagram" width="860">
+</p>
+
+<details>
+<summary>Colour key</summary>
+
+| Colour | Layer |
+|---|---|
+| 🔵 Blue | Frontend — React 18 · Vite · TanStack Query · Radix/shadcn |
+| 🟢 Green | Backend — FastAPI · SQLAlchemy · SQLite |
+| 🟡 Amber | Agent Runtime — LangGraph StateGraph · TrueForge harness |
+| 🟣 Purple | LLM Providers — Hugging Face (primary) → Gemini (fallback) |
+| 🔴 Red | MCP Servers — enrichment · research · exa · hunter |
+| 🩵 Teal | Sandboxed Execution — Daytona Python sandbox |
+
+</details>
+
+---
+
+### Agent Pipeline
+
+> The five-node per-lead LangGraph pipeline, all MCP tool calls, the Daytona sandbox, TrueForge skill, human-approval gates, LLM fallback chain, and the standalone Prioritization / Ranking Agent.
+
+<p align="center">
+  <img src="docs/diagrams/agent_pipeline.svg" alt="Signalis agent pipeline diagram" width="860">
+</p>
+
+<details>
+<summary>Reading the diagram</summary>
+
+| Shape | Meaning |
+|---|---|
+| Rounded rectangle | Agent node or service |
+| Diamond | Decision / approval gate |
+| Component (folded corner) | External tool or MCP server |
+| Note (dog-ear) | TrueForge skill |
+| Cylinder | Database / persistent store |
+| Dashed edge | Optional / fallback path |
+| Solid edge | Primary data flow |
+
+Solid borders = primary path. Dashed borders / dashed edges = fallback or optional paths (TrueForge unreachable, low-confidence branch, tool denied).
+
+</details>
+
+> **Regenerating the diagrams**
+> ```bash
+> cd docs/diagrams
+> dot -Tsvg system_architecture.dot -o system_architecture.svg
+> dot -Tsvg agent_pipeline.dot     -o agent_pipeline.svg
+> # PNG at 150 dpi
+> dot -Tpng -Gdpi=150 system_architecture.dot -o system_architecture.png
+> dot -Tpng -Gdpi=150 agent_pipeline.dot      -o agent_pipeline.png
+> ```
+> Requires [Graphviz](https://graphviz.org) (`dot` ≥ 2.40).
+>
+> Diagrams generated with [Graphviz](https://graphviz.org) — © 2024 The Graphviz Authors, released under the [Eclipse Public License v1.0](https://graphviz.org/license/).
+
+---
+
 Full write-ups: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (system overview),
 [docs/AGENT_GRAPH.md](docs/AGENT_GRAPH.md) (agent graph + handoffs),
 [docs/DATA_SCHEMA.md](docs/DATA_SCHEMA.md) (database schema),

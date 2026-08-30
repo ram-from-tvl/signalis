@@ -1,0 +1,347 @@
+// Signalis — Agent Pipeline
+// Render: dot -Tsvg agent_pipeline.dot -o agent_pipeline.svg
+//         dot -Tpng -Gdpi=150 agent_pipeline.dot -o agent_pipeline.png
+// Graphviz (https://graphviz.org) — Eclipse Public License v1.0
+
+digraph signalis_agents {
+
+    // ── Global layout ───────────────────────────────────────────────
+    graph [
+        rankdir   = TB
+        splines   = true
+        nodesep   = 0.65
+        ranksep   = 0.85
+        fontname  = "Helvetica Neue,Helvetica,Arial,sans-serif"
+        fontsize  = 15
+        bgcolor   = "#FAFAFA"
+        pad       = 0.6
+        label     = "Signalis — Agent Pipeline"
+        labelloc  = t
+        labeljust = c
+        fontcolor = "#1A1A2E"
+    ]
+    node [
+        fontname = "Helvetica Neue,Helvetica,Arial,sans-serif"
+        fontsize = 10
+        style    = "filled,rounded"
+        shape    = rect
+        penwidth = 1.2
+        margin   = "0.20,0.12"
+    ]
+    edge [
+        fontname  = "Helvetica Neue,Helvetica,Arial,sans-serif"
+        fontsize  = 9
+        color     = "#8C9BAB"
+        arrowsize = 0.75
+        penwidth  = 1.1
+    ]
+
+    // ═══════════════════════════════════════════════════════════════
+    // INPUT
+    // ═══════════════════════════════════════════════════════════════
+    input [
+        label     = "Lead + Raw Signals\nCRM rows · website events"
+        shape     = parallelogram
+        fillcolor = "#EDF2F7"
+        color     = "#4A5568"
+        fontcolor = "#2D3748"
+    ]
+
+    // ═══════════════════════════════════════════════════════════════
+    // PER-LEAD PIPELINE  —  LangGraph StateGraph  (amber)
+    // ═══════════════════════════════════════════════════════════════
+    subgraph cluster_pipeline {
+        label     = "Per-lead Pipeline  ·  LangGraph StateGraph  ·  TrueForge session per node"
+        style     = "filled,rounded"
+        fillcolor = "#FFFDE7"
+        color     = "#E07B00"
+        fontcolor = "#7A3800"
+        fontsize  = 11
+        penwidth  = 2.0
+
+        // ── Node 1 ─────────────────────────────────────────────────
+        node1 [
+            label     = "① Signal Extraction\nNormalize event_type\n& intent_stage_hint per signal"
+            fillcolor = "#FFF9C4"
+            color     = "#E07B00"
+            fontcolor = "#5C3800"
+        ]
+
+        // ── Node 2 + MCP tools  (red cluster) ──────────────────────
+        subgraph cluster_personafit {
+            label     = "② Persona Fit Agent"
+            style     = "filled,rounded"
+            fillcolor = "#FFE8E8"
+            color     = "#C0392B"
+            fontcolor = "#7B0000"
+            fontsize  = 10
+            penwidth  = 1.5
+
+            node2 [
+                label     = "Persona Fit\nScore lead vs. ICP\nfit: full / partial / mismatch"
+                fillcolor = "#FFCDD2"
+                color     = "#C0392B"
+                fontcolor = "#7B0000"
+            ]
+            tool_gate [
+                label     = "Human Approval Gate\nTrueForge native\ntool.approval_required"
+                shape     = diamond
+                fillcolor = "#FFEBEE"
+                color     = "#B71C1C"
+                fontcolor = "#7B0000"
+            ]
+            mcp_tools [
+                label     = "MCP Tools via TrueForge\nsignalis-enrichment :8791\n  classify_company_industry\n  estimate_company_size_band\nsignalis-research :8792\n  search_company_news  (Tavily)\nsignalis-exa :8793\n  search_company_semantic  (Exa)"
+                shape     = component
+                fillcolor = "#FFFFFF"
+                color     = "#C0392B"
+                fontcolor = "#7B0000"
+            ]
+
+            node2     -> tool_gate [label="enrichment call" color="#C0392B" fontcolor="#C0392B"]
+            tool_gate -> node2     [label="approved / denied" style=dashed color="#B71C1C" fontcolor="#B71C1C"]
+            node2     -> mcp_tools [label="call" style=dashed color="#C0392B" fontcolor="#C0392B"]
+            mcp_tools -> node2     [label="result" style=dashed color="#C0392B" fontcolor="#C0392B"]
+        }
+
+        // ── Node 3 + Daytona  (teal cluster) ───────────────────────
+        subgraph cluster_buyingstage {
+            label     = "③ Buying Stage Orchestrator"
+            style     = "filled,rounded"
+            fillcolor = "#E8F8F5"
+            color     = "#1A7A5E"
+            fontcolor = "#0D4D3B"
+            fontsize  = 10
+            penwidth  = 1.5
+
+            node3 [
+                label     = "Buying Stage\nClassify: early / mid / late\n+ confidence score"
+                fillcolor = "#B2DFDB"
+                color     = "#1A7A5E"
+                fontcolor = "#0D4D3B"
+            ]
+            daytona [
+                label     = "Daytona Sandbox\nGenerated Python\nsignal scoring\nfallback: local"
+                shape     = component
+                fillcolor = "#FFFFFF"
+                color     = "#1A7A5E"
+                fontcolor = "#0D4D3B"
+            ]
+
+            node3   -> daytona [label="exec" style=dashed color="#1A7A5E" fontcolor="#1A7A5E"]
+            daytona -> node3   [label="score" style=dashed color="#1A7A5E" fontcolor="#1A7A5E"]
+        }
+
+        // ── Conditional edge diamond ────────────────────────────────
+        conf_branch [
+            label     = "confidence ≥ threshold?"
+            shape     = diamond
+            fillcolor = "#FFF9C4"
+            color     = "#E07B00"
+            fontcolor = "#5C3800"
+        ]
+
+        // ── Node 4 + Hunter + Skill  (blue cluster) ────────────────
+        subgraph cluster_outreach {
+            label     = "④ Outreach Planner Agent"
+            style     = "filled,rounded"
+            fillcolor = "#E8F4FD"
+            color     = "#2E86AB"
+            fontcolor = "#1B5E7A"
+            fontsize  = 10
+            penwidth  = 1.5
+
+            node4 [
+                label     = "Outreach Planner\n3–5 touchpoints · channels\ncopy drafts  →  pending_approval"
+                fillcolor = "#D6EAF8"
+                color     = "#2E86AB"
+                fontcolor = "#1B5E7A"
+            ]
+            hunter_mcp [
+                label     = "signalis-hunter  :8794\nverify_email · find_email\nHunter.io API"
+                shape     = component
+                fillcolor = "#FFFFFF"
+                color     = "#2E86AB"
+                fontcolor = "#1B5E7A"
+            ]
+            tf_skill [
+                label     = "TrueForge Skill\noutreach-copywriting-\nstyle-guide"
+                shape     = note
+                fillcolor = "#BBDEFB"
+                color     = "#2E86AB"
+                fontcolor = "#1B5E7A"
+            ]
+
+            node4      -> hunter_mcp [label="verify email" style=dashed color="#2E86AB" fontcolor="#2E86AB"]
+            hunter_mcp -> node4      [label="status" style=dashed color="#2E86AB" fontcolor="#2E86AB"]
+            node4      -> tf_skill   [label="consult" style=dashed arrowhead=none color="#2E86AB" fontcolor="#2E86AB"]
+        }
+
+        // ── Node 5 ──────────────────────────────────────────────────
+        node5 [
+            label     = "⑤ Explainability\nSynthesize plain-language\nreasoning narrative"
+            fillcolor = "#F3E8FF"
+            color     = "#7B2FBE"
+            fontcolor = "#4A0080"
+        ]
+
+        // ── Human approval gate (plan) ──────────────────────────────
+        plan_approval [
+            label     = "Human Approval\noutreach plan"
+            shape     = diamond
+            fillcolor = "#E8EAF6"
+            color     = "#3949AB"
+            fontcolor = "#1A237E"
+        ]
+
+        // ── Pipeline flow edges ─────────────────────────────────────
+        node1       -> node2        [label="normalized signals"]
+        node2       -> node3        [label="fit result"]
+        node3       -> conf_branch
+        conf_branch -> node4        [label="high conf → auto_approved"]
+        conf_branch -> node4        [label="low conf → pending_approval" style=dashed]
+        node4       -> node5
+        node5       -> plan_approval
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // LLM FALLBACK CHAIN  (purple — applies to every node)
+    // ═══════════════════════════════════════════════════════════════
+    subgraph cluster_llm {
+        label     = "LLM Fallback Chain  ·  every node"
+        style     = "filled,rounded"
+        fillcolor = "#F3E8FF"
+        color     = "#7B2FBE"
+        fontcolor = "#4A0080"
+        fontsize  = 10
+        penwidth  = 1.5
+
+        tf_primary [
+            label     = "TrueForge\nHugging Face models\nmulti-key rotation"
+            fillcolor = "#E1BEE7"
+            color     = "#7B2FBE"
+            fontcolor = "#4A0080"
+        ]
+        tf_gemini [
+            label     = "TrueForge\nGemini fallback model"
+            fillcolor = "#E1BEE7"
+            color     = "#7B2FBE"
+            fontcolor = "#4A0080"
+        ]
+        direct_hf [
+            label     = "Direct HF call\nno MCP · no skill"
+            fillcolor = "#EDE7F6"
+            color     = "#7B2FBE"
+            fontcolor = "#4A0080"
+            style     = "filled,rounded,dashed"
+        ]
+        direct_gemini [
+            label     = "Direct Gemini call\nno MCP · no skill"
+            fillcolor = "#EDE7F6"
+            color     = "#7B2FBE"
+            fontcolor = "#4A0080"
+            style     = "filled,rounded,dashed"
+        ]
+
+        tf_primary   -> tf_gemini     [label="all TF models fail" style=dashed color="#7B2FBE" fontcolor="#7B2FBE"]
+        tf_gemini    -> direct_hf     [label="TF unreachable"     style=dashed color="#7B2FBE" fontcolor="#7B2FBE"]
+        direct_hf    -> direct_gemini [label="HF fails"           style=dashed color="#7B2FBE" fontcolor="#7B2FBE"]
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STANDALONE RANKING AGENT  (green)
+    // ═══════════════════════════════════════════════════════════════
+    subgraph cluster_ranking {
+        label     = "Standalone Prioritization / Ranking Agent  ·  pipeline-wide · on demand"
+        style     = "filled,rounded"
+        fillcolor = "#EAF4EA"
+        color     = "#2D6A4F"
+        fontcolor = "#1A4731"
+        fontsize  = 11
+        penwidth  = 2.0
+
+        root_agent [
+            label     = "Root Ranking Agent\nTrueForge session\nreads all leads' classifications"
+            fillcolor = "#C8E6C9"
+            color     = "#2D6A4F"
+            fontcolor = "#1A4731"
+        ]
+        subagents [
+            label     = "TrueForge Subagent Delegation\ncreate_sub_agent × N leads\nparallel · isolated context\nper-lead priority score"
+            shape     = component
+            fillcolor = "#FFFFFF"
+            color     = "#2D6A4F"
+            fontcolor = "#1A4731"
+        ]
+        consolidate [
+            label     = "Root: cross-lead comparison\nfinal 1..N ranking\n+ reason per lead"
+            fillcolor = "#C8E6C9"
+            color     = "#2D6A4F"
+            fontcolor = "#1A4731"
+        ]
+        ranking_out [
+            label     = "PipelineRanking snapshot\nappend-only"
+            shape     = cylinder
+            fillcolor = "#EDF2F7"
+            color     = "#4A5568"
+            fontcolor = "#2D3748"
+        ]
+
+        root_agent  -> subagents   [label="delegate" color="#2D6A4F" fontcolor="#2D6A4F"]
+        subagents   -> consolidate [label="scores"   color="#2D6A4F" fontcolor="#2D6A4F"]
+        consolidate -> ranking_out
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // OUTPUT / PERSISTENCE  (grey)
+    // ═══════════════════════════════════════════════════════════════
+    subgraph cluster_output {
+        label     = "Persisted Output  ·  SQLite  ·  append-only"
+        style     = "filled,rounded"
+        fillcolor = "#EDF2F7"
+        color     = "#4A5568"
+        fontcolor = "#2D3748"
+        fontsize  = 10
+        penwidth  = 1.5
+
+        db_class [
+            label     = "stage_classifications"
+            shape     = cylinder
+            fillcolor = "#FFFFFF"
+            color     = "#4A5568"
+            fontcolor = "#2D3748"
+        ]
+        db_plans [
+            label     = "outreach_plans"
+            shape     = cylinder
+            fillcolor = "#FFFFFF"
+            color     = "#4A5568"
+            fontcolor = "#2D3748"
+        ]
+        db_runs [
+            label     = "agent_runs\n+ followups"
+            shape     = cylinder
+            fillcolor = "#FFFFFF"
+            color     = "#4A5568"
+            fontcolor = "#2D3748"
+        ]
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CROSS-CLUSTER EDGES
+    // ═══════════════════════════════════════════════════════════════
+
+    // Input → pipeline
+    input -> node1
+
+    // Each pipeline node uses TrueForge (representative edge)
+    node1 -> tf_primary [label="TrueForge turn" style=dashed color="#7B2FBE" fontcolor="#7B2FBE"]
+
+    // Pipeline → persistence
+    plan_approval -> db_class
+    plan_approval -> db_plans
+    plan_approval -> db_runs
+
+    // All leads' classifications feed the ranking agent
+    db_class -> root_agent [label="all leads'\nclassifications" color="#2D6A4F" fontcolor="#2D6A4F"]
+}

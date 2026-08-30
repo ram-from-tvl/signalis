@@ -1,0 +1,276 @@
+// Signalis — System Architecture
+// Render: dot -Tsvg system_architecture.dot -o system_architecture.svg
+//         dot -Tpng -Gdpi=150 system_architecture.dot -o system_architecture.png
+// Graphviz (https://graphviz.org) — Eclipse Public License v1.0
+
+digraph signalis_architecture {
+
+    // ── Global layout ───────────────────────────────────────────────
+    graph [
+        rankdir   = TB
+        splines   = true
+        nodesep   = 0.55
+        ranksep   = 0.80
+        fontname  = "Helvetica Neue,Helvetica,Arial,sans-serif"
+        fontsize  = 15
+        bgcolor   = "#FAFAFA"
+        pad       = 0.6
+        label     = "Signalis — System Architecture"
+        labelloc  = t
+        labeljust = c
+        fontcolor = "#1A1A2E"
+    ]
+    node [
+        fontname = "Helvetica Neue,Helvetica,Arial,sans-serif"
+        fontsize = 10
+        style    = "filled,rounded"
+        shape    = rect
+        penwidth = 1.2
+        margin   = "0.20,0.12"
+    ]
+    edge [
+        fontname  = "Helvetica Neue,Helvetica,Arial,sans-serif"
+        fontsize  = 9
+        color     = "#8C9BAB"
+        arrowsize = 0.75
+        penwidth  = 1.1
+    ]
+
+    // ═══════════════════════════════════════════════════════════════
+    // LAYER 1 — FRONTEND   (blue)
+    // ═══════════════════════════════════════════════════════════════
+    subgraph cluster_frontend {
+        label     = "Frontend  ·  React 18 + Vite + TypeScript + Tailwind"
+        style     = "filled,rounded"
+        fillcolor = "#E8F4FD"
+        color     = "#2E86AB"
+        fontcolor = "#1B5E7A"
+        fontsize  = 11
+        penwidth  = 1.8
+
+        browser [
+            label     = "Browser\n(marketer / rep)"
+            fillcolor = "#FFFFFF"
+            color     = "#2E86AB"
+            fontcolor = "#1B5E7A"
+        ]
+        fe_pages [
+            label     = "5 App Screens\nDashboard · Leads · Pipeline\nSetup · Agent Trace"
+            fillcolor = "#D6EAF8"
+            color     = "#2E86AB"
+            fontcolor = "#1B5E7A"
+        ]
+        fe_query [
+            label     = "TanStack Query\n(typed API client)"
+            fillcolor = "#D6EAF8"
+            color     = "#2E86AB"
+            fontcolor = "#1B5E7A"
+        ]
+        fe_ui [
+            label     = "Radix / shadcn UI kit\n+ Tailwind CSS"
+            fillcolor = "#D6EAF8"
+            color     = "#2E86AB"
+            fontcolor = "#1B5E7A"
+            shape     = component
+        ]
+
+        browser  -> fe_pages
+        fe_pages -> fe_query
+        fe_pages -> fe_ui [style=dashed arrowhead=none]
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // LAYER 2 — BACKEND / API   (green)
+    // ═══════════════════════════════════════════════════════════════
+    subgraph cluster_backend {
+        label     = "Backend  ·  Python 3.11 · FastAPI · SQLAlchemy 2 · Pydantic v2"
+        style     = "filled,rounded"
+        fillcolor = "#EAF4EA"
+        color     = "#2D6A4F"
+        fontcolor = "#1A4731"
+        fontsize  = 11
+        penwidth  = 1.8
+
+        api [
+            label     = "FastAPI\n:8000\n/docs"
+            fillcolor = "#C8E6C9"
+            color     = "#2D6A4F"
+            fontcolor = "#1A4731"
+            shape     = cylinder
+        ]
+        ingestion [
+            label     = "Ingestion Service\nCRM CSV · website events"
+            fillcolor = "#C8E6C9"
+            color     = "#2D6A4F"
+            fontcolor = "#1A4731"
+        ]
+        pipeline_svc [
+            label     = "Pipeline Service\n(per-lead orchestration)"
+            fillcolor = "#C8E6C9"
+            color     = "#2D6A4F"
+            fontcolor = "#1A4731"
+        ]
+        approvals_svc [
+            label     = "Approvals Service\nplan · classification · tool"
+            fillcolor = "#C8E6C9"
+            color     = "#2D6A4F"
+            fontcolor = "#1A4731"
+        ]
+        db [
+            label     = "SQLite\nappend-only rows"
+            fillcolor = "#EDF2F7"
+            color     = "#4A5568"
+            fontcolor = "#2D3748"
+            shape     = cylinder
+        ]
+
+        api           -> ingestion
+        api           -> pipeline_svc
+        api           -> approvals_svc
+        ingestion     -> db
+        pipeline_svc  -> db
+        approvals_svc -> db
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // LAYER 3 — AGENT RUNTIME   (amber)
+    // ═══════════════════════════════════════════════════════════════
+    subgraph cluster_runtime {
+        label     = "Agent Runtime"
+        style     = "filled,rounded"
+        fillcolor = "#FFFDE7"
+        color     = "#E07B00"
+        fontcolor = "#7A3800"
+        fontsize  = 11
+        penwidth  = 1.8
+
+        langgraph [
+            label     = "LangGraph StateGraph\nnode ordering · confidence branch"
+            fillcolor = "#FFF9C4"
+            color     = "#E07B00"
+            fontcolor = "#7A3800"
+        ]
+        trueforge [
+            label     = "TrueForge Harness\n@truefoundry/trueforge  ·  :8790\nmodel calls · MCP discovery\nsession state · subagent delegation\nskills"
+            fillcolor = "#FFE082"
+            color     = "#E07B00"
+            fontcolor = "#5C3800"
+            penwidth  = 2.2
+        ]
+
+        langgraph -> trueforge [label="session / turn" color="#E07B00" fontcolor="#7A3800"]
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // LAYER 4 — LLM PROVIDERS   (purple)
+    // ═══════════════════════════════════════════════════════════════
+    subgraph cluster_llm {
+        label     = "LLM Providers  ·  fallback chain"
+        style     = "filled,rounded"
+        fillcolor = "#F3E8FF"
+        color     = "#7B2FBE"
+        fontcolor = "#4A0080"
+        fontsize  = 11
+        penwidth  = 1.8
+
+        hf [
+            label     = "Hugging Face\nInference Providers\nprimary · multi-key rotation"
+            fillcolor = "#E1BEE7"
+            color     = "#7B2FBE"
+            fontcolor = "#4A0080"
+        ]
+        gemini [
+            label     = "Google Gemini\nfallback · multi-key rotation"
+            fillcolor = "#E1BEE7"
+            color     = "#7B2FBE"
+            fontcolor = "#4A0080"
+        ]
+
+        hf -> gemini [label="failover" style=dashed color="#7B2FBE" fontcolor="#7B2FBE"]
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // LAYER 5 — MCP SERVERS   (red)
+    // ═══════════════════════════════════════════════════════════════
+    subgraph cluster_mcp {
+        label     = "MCP Servers  ·  self-hosted · Python"
+        style     = "filled,rounded"
+        fillcolor = "#FFE8E8"
+        color     = "#C0392B"
+        fontcolor = "#7B0000"
+        fontsize  = 11
+        penwidth  = 1.8
+
+        mcp_enrich [
+            label     = "signalis-enrichment  :8791\nclassify_company_industry\nestimate_company_size_band"
+            fillcolor = "#FFCDD2"
+            color     = "#C0392B"
+            fontcolor = "#7B0000"
+        ]
+        mcp_research [
+            label     = "signalis-research  :8792\nsearch_company_news\nTavily API"
+            fillcolor = "#FFCDD2"
+            color     = "#C0392B"
+            fontcolor = "#7B0000"
+        ]
+        mcp_exa [
+            label     = "signalis-exa  :8793\nsearch_company_semantic\nExa API"
+            fillcolor = "#FFCDD2"
+            color     = "#C0392B"
+            fontcolor = "#7B0000"
+        ]
+        mcp_hunter [
+            label     = "signalis-hunter  :8794\nverify_email · find_email\nHunter.io API"
+            fillcolor = "#FFCDD2"
+            color     = "#C0392B"
+            fontcolor = "#7B0000"
+        ]
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // LAYER 6 — SANDBOXED EXECUTION   (teal)
+    // ═══════════════════════════════════════════════════════════════
+    subgraph cluster_sandbox {
+        label     = "Sandboxed Execution"
+        style     = "filled,rounded"
+        fillcolor = "#E8F8F5"
+        color     = "#1A7A5E"
+        fontcolor = "#0D4D3B"
+        fontsize  = 11
+        penwidth  = 1.8
+
+        daytona [
+            label     = "Daytona Sandbox\ngenerated Python · signal scoring\nfallback: local computation"
+            fillcolor = "#B2DFDB"
+            color     = "#1A7A5E"
+            fontcolor = "#0D4D3B"
+        ]
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CROSS-LAYER EDGES
+    // ═══════════════════════════════════════════════════════════════
+
+    // Frontend ↔ Backend
+    fe_query     -> api          [label="REST / JSON" color="#2E86AB" fontcolor="#2E86AB"]
+    api          -> fe_query     [style=dashed color="#2E86AB"]
+
+    // Backend → Agent runtime
+    pipeline_svc -> langgraph    [label="invoke graph" color="#E07B00" fontcolor="#7A3800"]
+
+    // TrueForge → LLMs
+    trueforge -> hf              [label="primary" color="#7B2FBE" fontcolor="#7B2FBE"]
+    trueforge -> gemini          [label="fallback" style=dashed color="#7B2FBE" fontcolor="#7B2FBE"]
+
+    // TrueForge ↔ MCP servers
+    trueforge -> mcp_enrich      [label="MCP" color="#C0392B" fontcolor="#C0392B"]
+    trueforge -> mcp_research    [label="MCP" color="#C0392B" fontcolor="#C0392B"]
+    trueforge -> mcp_exa         [label="MCP" color="#C0392B" fontcolor="#C0392B"]
+    trueforge -> mcp_hunter      [label="MCP" color="#C0392B" fontcolor="#C0392B"]
+
+    // TrueForge → Daytona
+    trueforge -> daytona         [label="exec sandbox" color="#1A7A5E" fontcolor="#1A7A5E"]
+
+    // Results back to pipeline service → DB
+    trueforge -> pipeline_svc    [style=dashed label="structured output" color="#2D6A4F" fontcolor="#2D6A4F"]
+}
