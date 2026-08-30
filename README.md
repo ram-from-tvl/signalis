@@ -261,6 +261,59 @@ cd frontend
 npx eslint .
 ```
 
+## Qodo Code Review Evidence
+
+Qodo is wired into CI (`.pr_agent.toml`) to review every pull request
+automatically and re-review on every push, using custom guidelines tuned
+to this codebase's real failure patterns (silently-swallowed errors,
+loading states with no error branch, duplicated backend/frontend type
+shapes, secrets committed instead of read from settings). Every PR below
+received real, substantive findings — not boilerplate — and the flagged
+issue plus what happened next is one line each. Ordered by number of
+Qodo review comments, most first.
+
+Representative pick: **[PR #21 — Fix the singleton-persona problem: leads
+now belong to a campaign](https://github.com/ram-from-tvl/signalis/pull/21)**
+is the most-reviewed PR in the project (14 comments across two rounds).
+Qodo caught that the default-campaign invariant could silently break (no
+campaign could ever become default, an upload could leave leads with no
+campaign at all, two campaigns could secretly share the same persona), and
+four frontend pages swallowed a failed campaigns fetch instead of showing
+it. All were fixed in the same PR; Qodo's re-review of the fix commit came
+back clean, and one lower-priority finding (a duplicated type contract
+between backend and frontend, a pre-existing repo-wide pattern) was
+explicitly left with a stated reason rather than silently ignored.
+
+| PR | Qodo comments | What it found | Resolution |
+|---|---|---|---|
+| [#21](https://github.com/ram-from-tvl/signalis/pull/21) — Campaign fix | 14 | Default-campaign invariant could break; leads could end up campaign-less; 4 pages swallowed a failed fetch | Fixed in-PR, re-review confirmed clean; one finding (type-contract duplication) explicitly deferred with reasoning |
+| [#8](https://github.com/ram-from-tvl/signalis/pull/8) — Tool-approval gate | 13 | Approve/reject could leave an `AgentRun` in an inconsistent state; a race could duplicate resume events for the same tool call | Addressed across the PR's 10 commits |
+| [#5](https://github.com/ram-from-tvl/signalis/pull/5) — Documentation set | 10 | New docs described a not-yet-merged refactor as current fact (a nonexistent install path, a module that didn't exist, a false append-only claim) | Fixed in one commit, author confirmed each root cause and rewrote docs to match real code |
+| [#10](https://github.com/ram-from-tvl/signalis/pull/10) — Follow-up Q&A | 9 | Malformed TrueForge responses could surface as raw 500s instead of a proper dependency-failure response; follow-ups during a tool-approval gate were mishandled | Addressed across 11 commits over three review rounds |
+| [#13](https://github.com/ram-from-tvl/signalis/pull/13) — Exa/Hunter MCP tools | 9 | Email-verification status was being persisted from the model's own claim without confirming the tool actually ran — a hallucinated "verified" was possible | Addressed across 4 commits over three review rounds |
+| [#9](https://github.com/ram-from-tvl/signalis/pull/9) — Subagent ranking | 8 | A TrueForge outage could produce zero delegations and still get persisted as a fully "delegated" ranking; a new column shipped with no migration | Addressed across the PR's commits |
+| [#16](https://github.com/ram-from-tvl/signalis/pull/16) — Visual polish | 7 | A file drop-zone stayed interactive and accepted bad files mid-upload; `prefers-reduced-motion` wasn't respected on every new animation | Addressed across the PR's commits |
+| [#19](https://github.com/ram-from-tvl/signalis/pull/19) — UX redesign | 6 | A custom-trait input used array-index React keys, so every keystroke unmounted the field the user was typing in | Addressed across the PR's commits |
+| [#22](https://github.com/ram-from-tvl/signalis/pull/22) — UX polish | 6 | A failed/unverified tool-activity state rendered as if it had succeeded; a rapid second copy-click could have its own feedback wiped by the first click's timer | Fixed across two rounds, re-review confirmed clean; type-contract duplication finding deferred with the same reasoning as #21 |
+| [#2](https://github.com/ram-from-tvl/signalis/pull/2) — Ranking agent | 5 | Model-produced rankings weren't checked for completeness — the model could omit or duplicate leads and the API presented it as a complete ranking | Fixed with a normalization step (sort, dedupe, backfill omitted leads) and a new test, cited by commit |
+| [#20](https://github.com/ram-from-tvl/signalis/pull/20) — Docs catch-up | 5 | Docs overstated data immutability (approvals do mutate status/timestamps); an endpoint was missing from an "exhaustive" list; two directories in the tree didn't exist | Addressed across the PR's commits |
+| [#7](https://github.com/ram-from-tvl/signalis/pull/7) — Web-search MCP tool | 4 | A new MCP tool would silently never reach an already-provisioned deployment, since agent re-registration was treated as success without updating its manifest | Addressed across the PR's commits |
+| [#11](https://github.com/ram-from-tvl/signalis/pull/11) — Copywriting skill | 4 | Same class of bug as #7 — a new skill only applied to freshly-created agents, not already-deployed ones | Addressed across the PR's commits |
+| [#23](https://github.com/ram-from-tvl/signalis/pull/23) — README rewrite | 4 | A documented shell command couldn't actually run as written; a documented API flow was impossible given the real endpoint's validation; two factual claims about the schema didn't match the real code | **Not yet fixed** — flagged here rather than omitted |
+| [#14](https://github.com/ram-from-tvl/signalis/pull/14) — HF primary provider | 3 | A cached provider client didn't track which API key created it, so key rotation could silently reuse the wrong cached client on retry | Addressed across the PR's commits |
+| [#17](https://github.com/ram-from-tvl/signalis/pull/17) — Live pipeline progress | 3 | The live progress panel could admit trace rows from a previous run into a freshly started run's display; query errors rendered as "pending" instead of an error | Addressed across the PR's commits |
+| [#26](https://github.com/ram-from-tvl/signalis/pull/26) — Architecture diagrams | 3 | The pipeline diagram routed persistence through the approval gate incorrectly; both diagrams repeated the same append-only inaccuracy flagged in #20 | Addressed across the PR's commits |
+| [#27](https://github.com/ram-from-tvl/signalis/pull/27) — Frontend polish | 3 | A lead with a failed or still-loading trace query could be misread as "no prior runs" and show the wrong button label | Addressed across the PR's commits |
+| [#3](https://github.com/ram-from-tvl/signalis/pull/3) — UI redesign | 2 | Network errors and 5xx responses were being misreported as a plain "not found" state | Fixed with a new error class that preserves HTTP status, cited by commit |
+| [#4](https://github.com/ram-from-tvl/signalis/pull/4) — Backend refactor | 1 | CI installed against an unpinned dependency file, risking silent version drift | Fixed — CI now installs from the pinned lockfile first, cited by commit |
+| [#15](https://github.com/ram-from-tvl/signalis/pull/15) — .env.example | 1 | Leaving placeholder values in optional credential fields would make the app treat unconfigured integrations as configured | Addressed |
+
+For PRs without a linked commit above, the finding was addressed somewhere
+across that PR's later commits without an explicit written reply — verified
+by re-reading the final merged code, not just trusting the commit history.
+PR #23 is listed with its findings genuinely unresolved rather than
+retroactively marked fixed.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and code
