@@ -100,6 +100,9 @@ export interface StageClassification {
     fit?: string
     reasoning?: string
     missing_data?: string[]
+    // Which external checks genuinely ran for this assessment, in
+    // plain language — see backend/app/agents/tool_activity.py.
+    tools_used?: { tool: string; label: string }[]
   }
   requires_approval: boolean
   approval_status: ApprovalStatus

@@ -18,11 +18,23 @@ from app.agents.common import (
     run_agent_reasoning,
     start_run,
 )
+from app.agents.tool_activity import extract_tools_used
 from app.core.config import get_settings
 from app.core.llm import LLMError
 from app.models import AgentRun, Lead, Persona, Solution, StageClassification
 
 TRUEFORGE_AGENT_NAME = "signalis-persona-fit"
+
+# Every tool name across persona_fit's attached MCP servers (see
+# _MCP_SERVERS below) — used to ask TrueForge's session events which of
+# these genuinely ran, for plain-language display (see tools_used on the
+# result dict, set in run_persona_fit).
+_TRACKED_TOOL_NAMES = {
+    "classify_company_industry",
+    "estimate_company_size_band",
+    "search_company_news",
+    "search_company_semantic",
+}
 
 _MCP_SERVERS = [
     {
@@ -135,6 +147,7 @@ def run_persona_fit(
         finish_run(db, run, output={"error": str(exc)}, reasoning=str(exc), status="failed")
         raise
 
+    result["tools_used"] = extract_tools_used(session_id, _TRACKED_TOOL_NAMES)
     finish_run(db, run, output=result, reasoning=result.get("reasoning", ""), trueforge_session_id=session_id)
     return result, run.id
 
@@ -195,6 +208,7 @@ def resume_persona_fit(
         raise
 
     if approve:
+        result["tools_used"] = extract_tools_used(session_id, _TRACKED_TOOL_NAMES)
         finish_run(db, run, output=result, reasoning=result.get("reasoning", ""), trueforge_session_id=session_id)
     else:
         finish_run(
