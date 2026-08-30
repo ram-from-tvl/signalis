@@ -369,9 +369,10 @@ def test_persona_fit_reports_tools_used_from_the_real_session(db_session, sample
 
     mock_results.assert_called_once()
     assert mock_results.call_args[0][0] == "session-pqr"
-    assert result["tools_used"] == [
-        {"tool": "classify_company_industry", "label": "Looked up the company's industry"}
-    ]
+    assert result["tools_used"] == {
+        "items": [{"tool": "classify_company_industry", "label": "Looked up the company's industry"}],
+        "evidence_unavailable": False,
+    }
 
 
 def test_persona_fit_reports_no_tools_used_when_none_genuinely_ran(db_session, sample_lead):
@@ -384,7 +385,25 @@ def test_persona_fit_reports_no_tools_used_when_none_genuinely_ran(db_session, s
     ):
         result, _ = run_persona_fit(db_session, sample_lead, None, None)
 
-    assert result["tools_used"] == []
+    assert result["tools_used"] == {"items": [], "evidence_unavailable": False}
+
+
+def test_persona_fit_marks_evidence_unavailable_when_events_fetch_fails(db_session, sample_lead):
+    """A TrueForge outage while confirming tool usage must not look
+    identical to "genuinely no external checks ran" — the UI needs to be
+    able to tell those apart (see test_tool_activity.py)."""
+    from app.core.trueforge import TrueForgeError
+
+    with (
+        patch(
+            "app.agents.persona_fit.run_agent_reasoning",
+            return_value=({"fit": "full_fit", "reasoning": "test", "missing_data": []}, "session-vwx"),
+        ),
+        patch("app.agents.tool_activity.get_tool_call_results", side_effect=TrueForgeError("boom")),
+    ):
+        result, _ = run_persona_fit(db_session, sample_lead, None, None)
+
+    assert result["tools_used"] == {"items": [], "evidence_unavailable": True}
 
 
 def test_run_persona_fit_reuses_completed_run_instead_of_hitting_gate_again(db_session, sample_lead):

@@ -102,7 +102,9 @@ export interface StageClassification {
     missing_data?: string[]
     // Which external checks genuinely ran for this assessment, in
     // plain language — see backend/app/agents/tool_activity.py.
-    tools_used?: { tool: string; label: string }[]
+    // evidence_unavailable distinguishes "asked and nothing ran" (false,
+    // items empty) from "couldn't ask" (true, e.g. a TrueForge outage).
+    tools_used?: { items: { tool: string; label: string }[]; evidence_unavailable: boolean }
   }
   requires_approval: boolean
   approval_status: ApprovalStatus

@@ -354,15 +354,20 @@ export function LeadDetailPage() {
                     Missing data: {latestClassification.persona_fit_result.missing_data.join(", ")}
                   </p>
                 )}
-                {!!latestClassification.persona_fit_result.tools_used?.length && (
+                {!!latestClassification.persona_fit_result.tools_used?.items.length && (
                   <div className="flex items-center gap-1.5 flex-wrap mt-2">
                     <span className="text-xs text-muted-foreground">External checks used:</span>
-                    {latestClassification.persona_fit_result.tools_used.map((t) => (
+                    {latestClassification.persona_fit_result.tools_used.items.map((t) => (
                       <Badge key={t.tool} variant="outline" className="text-[10px]">
                         {t.label}
                       </Badge>
                     ))}
                   </div>
+                )}
+                {latestClassification.persona_fit_result.tools_used?.evidence_unavailable && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Couldn't confirm which external checks ran for this assessment.
+                  </p>
                 )}
               </div>
             )}

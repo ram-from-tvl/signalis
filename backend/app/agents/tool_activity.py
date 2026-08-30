@@ -29,23 +29,30 @@ TOOL_LABELS: dict[str, str] = {
 }
 
 
-def extract_tools_used(session_id: str | None, tool_names: set[str]) -> list[dict[str, str]]:
-    """Returns [{"tool": <raw name>, "label": <plain-language label>}] for
-    every tool in tool_names that genuinely ran on this session, in the
-    order TrueForge recorded them. Empty (never raises) if there's no
-    session, nothing ran, or the events fetch fails — this is a "nice to
-    show" list, not something worth failing a pipeline run over."""
+def extract_tools_used(session_id: str | None, tool_names: set[str]) -> dict:
+    """Returns {"items": [{"tool": <raw name>, "label": <plain-language
+    label>}, ...], "evidence_unavailable": bool} for every tool in
+    tool_names that genuinely ran on this session, in the order TrueForge
+    recorded them.
+
+    evidence_unavailable distinguishes "we asked and genuinely nothing ran"
+    (items=[], evidence_unavailable=False — a normal, honest outcome) from
+    "we couldn't ask" (items=[], evidence_unavailable=True — the
+    session-events fetch itself failed, e.g. a TrueForge outage), the same
+    distinction _extract_email_verification's "evidence_unavailable" status
+    makes for verify_email. Never raises — this is display-only detail, not
+    worth failing a pipeline run over."""
     if not session_id:
-        return []
+        return {"items": [], "evidence_unavailable": False}
     try:
         tool_results = get_tool_call_results(session_id, tool_names)
     except TrueForgeError as exc:
         logger.warning(
             "Could not fetch session events to report which tools were used; "
-            "omitting tool-activity detail for this run: %s",
+            "marking tool-activity evidence unavailable for this run: %s",
             exc,
         )
-        return []
+        return {"items": [], "evidence_unavailable": True}
 
     seen: set[str] = set()
     used: list[dict[str, str]] = []
@@ -55,7 +62,7 @@ def extract_tools_used(session_id: str | None, tool_names: set[str]) -> list[dic
             continue
         seen.add(name)
         used.append({"tool": name, "label": TOOL_LABELS.get(name, name)})
-    return used
+    return {"items": used, "evidence_unavailable": False}
 
 
 def tool_label(tool_name: str) -> str:
