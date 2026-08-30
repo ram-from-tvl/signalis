@@ -11,6 +11,7 @@ from app.models._mixins import new_uuid, utcnow
 
 if TYPE_CHECKING:
     from app.models.agent_run import AgentRun
+    from app.models.campaign import Campaign
     from app.models.classification import OutreachPlan, StageClassification
 
 
@@ -25,8 +26,13 @@ class Lead(Base):
     industry: Mapped[str] = mapped_column(String, default="")
     geography: Mapped[str] = mapped_column(String, default="")
     email: Mapped[str] = mapped_column(String, default="")
+    # Nullable so pre-existing rows (from before campaigns existed) remain
+    # valid; the pipeline treats a null campaign_id as "use the default
+    # campaign" rather than erroring. See app/services/pipeline.py.
+    campaign_id: Mapped[str | None] = mapped_column(ForeignKey("campaigns.id"), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=utcnow)
 
+    campaign: Mapped["Campaign | None"] = relationship()
     signals: Mapped[list["Signal"]] = relationship(
         back_populates="lead", cascade="all, delete-orphan", order_by="Signal.occurred_at"
     )

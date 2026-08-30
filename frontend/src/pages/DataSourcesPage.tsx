@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react"
-import { useMutation } from "@tanstack/react-query"
-import { uploadsApi } from "@/api/endpoints"
+import { useMutation, useQuery } from "@tanstack/react-query"
+import { campaignsApi, uploadsApi } from "@/api/endpoints"
 import { API_BASE_URL } from "@/api/client"
 import type { IngestionReport } from "@/types/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Label } from "@/components/ui/label"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/components/ui/toast-context"
 import { cn } from "@/lib/utils"
 import {
@@ -145,9 +147,23 @@ export function DataSourcesPage() {
   const [jsonReport, setJsonReport] = useState<IngestionReport | null>(null)
   const [csvIsSample, setCsvIsSample] = useState(false)
   const [jsonIsSample, setJsonIsSample] = useState(false)
+  const [targetCampaignId, setTargetCampaignId] = useState<string | undefined>(undefined)
+
+  const { data: campaigns, isError: campaignsErrored } = useQuery({
+    queryKey: ["campaigns"],
+    queryFn: campaignsApi.list,
+  })
+
+  // Default to whichever campaign is marked default once campaigns load,
+  // without overriding a choice the marketer already made.
+  useEffect(() => {
+    if (targetCampaignId || !campaigns?.length) return
+    const defaultCampaign = campaigns.find((c) => c.is_default) ?? campaigns[0]
+    setTargetCampaignId(defaultCampaign.id)
+  }, [campaigns, targetCampaignId])
 
   const csvMutation = useMutation({
-    mutationFn: uploadsApi.crmCsv,
+    mutationFn: (file: File) => uploadsApi.crmCsv(file, targetCampaignId),
     onSuccess: (report) => {
       setCsvReport(report)
       push({ title: "CRM CSV ingested", description: `${report.leads_created} lead(s) created`, variant: "success" })
@@ -203,6 +219,31 @@ export function DataSourcesPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
+            {campaignsErrored && (
+              <p className="text-xs text-destructive">
+                Couldn't load campaigns — new leads will go to whichever campaign is marked
+                default on the server, since targeting can't be chosen right now. Reload the
+                page to try again.
+              </p>
+            )}
+            {(campaigns?.length ?? 0) > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="upload-campaign">Assign new leads to</Label>
+                <Select value={targetCampaignId} onValueChange={setTargetCampaignId}>
+                  <SelectTrigger id="upload-campaign">
+                    <SelectValue placeholder="Choose a campaign" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {campaigns?.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.name}
+                        {c.is_default ? " (default)" : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <DropZone
               icon={UploadCloud}
               accept=".csv"

@@ -1,9 +1,10 @@
 """Runs the LangGraph agent pipeline for a lead and persists results.
 
 This is the boundary between the stateless agent graph (app.agents.graph)
-and the database: it resolves the active persona/solution, invokes the
-graph, and writes the resulting StageClassification and OutreachPlan rows,
-marking any prior ones as superseded so full history is retained.
+and the database: it resolves the lead's campaign persona/solution,
+invokes the graph, and writes the resulting StageClassification and
+OutreachPlan rows, marking any prior ones as superseded so full history is
+retained.
 """
 from __future__ import annotations
 
@@ -17,14 +18,43 @@ from app.agents.graph import get_pipeline_graph
 from app.core.config import get_settings
 from app.models import (
     AgentRun,
+    Campaign,
     Lead,
     OutreachPlan,
-    Persona,
     Signal,
-    Solution,
     StageClassification,
     ToolApprovalRequest,
 )
+
+
+class NoCampaignConfigured(Exception):
+    """Raised when a lead has no campaign assigned and no default campaign
+    exists to fall back to (e.g. a lead was ingested before any
+    persona/solution was ever saved). The caller should surface this as a
+    clear "assign a campaign first" error rather than silently scoring the
+    lead against nothing, or against whatever config happens to exist."""
+
+
+def _resolve_campaign(db: Session, lead: Lead) -> Campaign:
+    """Every lead is scored against its own campaign's persona/solution —
+    not a single system-wide "active" persona (see docs/DECISIONS.md's
+    "singleton persona" writeup). A lead with no campaign_id (pre-dating
+    the Campaign model, or created without one) falls back to whichever
+    Campaign is marked is_default, so ingestion and demo-seed flows that
+    don't specify a campaign keep working."""
+    if lead.campaign_id:
+        campaign = db.get(Campaign, lead.campaign_id)
+        if campaign is not None:
+            return campaign
+    default_campaign = db.execute(
+        select(Campaign).where(Campaign.is_default.is_(True))
+    ).scalars().first()
+    if default_campaign is None:
+        raise NoCampaignConfigured(
+            f"Lead {lead.id} has no campaign assigned, and no default campaign exists. "
+            "Create a persona, a solution, and a campaign before running the pipeline."
+        )
+    return default_campaign
 
 
 class PipelinePausedForApproval(Exception):
@@ -44,14 +74,6 @@ class PipelinePausedForApproval(Exception):
         super().__init__(f"Pipeline paused awaiting {len(requests)} tool approval(s)")
 
 
-def _latest_persona(db: Session) -> Persona | None:
-    return db.execute(select(Persona).order_by(Persona.created_at.desc())).scalars().first()
-
-
-def _latest_solution(db: Session) -> Solution | None:
-    return db.execute(select(Solution).order_by(Solution.created_at.desc())).scalars().first()
-
-
 def _unclassified_signals(lead: Lead) -> list[Signal]:
     """Signals not yet processed by the Signal Extraction Agent (event_type
     still 'unknown' with no extraction run attached). Re-running the graph
@@ -62,8 +84,9 @@ def _unclassified_signals(lead: Lead) -> list[Signal]:
 
 def run_pipeline_for_lead(db: Session, lead: Lead) -> dict[str, Any]:
     settings = get_settings()
-    persona = _latest_persona(db)
-    solution = _latest_solution(db)
+    campaign = _resolve_campaign(db, lead)
+    persona = campaign.persona
+    solution = campaign.solution
     new_signals = _unclassified_signals(lead)
 
     graph = get_pipeline_graph()

@@ -10,6 +10,7 @@ from fastapi import APIRouter
 from app.api.routes import (
     agent_followups,
     approvals,
+    campaigns,
     dashboard,
     leads,
     personas,
@@ -25,6 +26,7 @@ api_router = APIRouter()
 for module in (
     personas,
     solutions,
+    campaigns,
     uploads,
     leads,
     pipeline,

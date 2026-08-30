@@ -47,7 +47,33 @@ export interface Lead {
   industry: string
   geography: string
   email: string
+  campaign_id: string | null
   created_at: string
+}
+
+// A campaign bundles one persona + one solution — the targeting config a
+// lead is actually scored against, instead of the whole pipeline sharing
+// a single "active" persona/solution. See docs/DECISIONS.md.
+export interface Campaign {
+  id: string
+  name: string
+  persona_id: string
+  solution_id: string
+  is_default: boolean
+  created_at: string
+}
+
+export interface CampaignInput {
+  name: string
+  persona_id: string
+  solution_id: string
+  is_default?: boolean
+}
+
+export interface CampaignDetail extends Campaign {
+  persona: Persona
+  solution: Solution
+  lead_count: number
 }
 
 export interface Signal {
@@ -131,6 +157,7 @@ export interface AgentRunFollowup {
 
 export interface LeadListItem {
   lead: Lead
+  campaign_name: string | null
   latest_classification: StageClassification | null
   latest_plan_status: PlanStatus | null
 }

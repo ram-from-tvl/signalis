@@ -28,11 +28,13 @@ class LeadOut(BaseModel):
     industry: str
     geography: str
     email: str
+    campaign_id: str | None = None
     created_at: datetime.datetime
 
 
 class LeadListItem(BaseModel):
     lead: LeadOut
+    campaign_name: str | None = None
     latest_classification: StageClassificationOut | None = None
     latest_plan_status: str | None = None
 

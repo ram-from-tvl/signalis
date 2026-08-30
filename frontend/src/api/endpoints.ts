@@ -2,6 +2,9 @@ import { apiClient } from "./client"
 import type {
   AgentRun,
   AgentRunFollowup,
+  Campaign,
+  CampaignDetail,
+  CampaignInput,
   DashboardStats,
   IngestionReport,
   LeadDetail,
@@ -34,10 +37,25 @@ export const solutionsApi = {
   remove: (id: string) => apiClient.delete(`/api/solutions/${id}`),
 }
 
+export const campaignsApi = {
+  list: () => apiClient.get<CampaignDetail[]>("/api/campaigns").then((r) => r.data),
+  get: (id: string) => apiClient.get<CampaignDetail>(`/api/campaigns/${id}`).then((r) => r.data),
+  create: (payload: CampaignInput) =>
+    apiClient.post<Campaign>("/api/campaigns", payload).then((r) => r.data),
+  update: (id: string, payload: CampaignInput) =>
+    apiClient.put<Campaign>(`/api/campaigns/${id}`, payload).then((r) => r.data),
+  remove: (id: string) => apiClient.delete(`/api/campaigns/${id}`),
+  assignLeads: (id: string, leadIds: string[]) =>
+    apiClient
+      .post<CampaignDetail>(`/api/campaigns/${id}/assign-leads`, { lead_ids: leadIds })
+      .then((r) => r.data),
+}
+
 export const uploadsApi = {
-  crmCsv: (file: File) => {
+  crmCsv: (file: File, campaignId?: string) => {
     const formData = new FormData()
     formData.append("file", file)
+    if (campaignId) formData.append("campaign_id", campaignId)
     return apiClient
       .post<IngestionReport>("/api/uploads/crm-csv", formData, {
         headers: { "Content-Type": "multipart/form-data" },
