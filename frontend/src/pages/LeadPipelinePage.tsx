@@ -41,7 +41,10 @@ export function LeadPipelinePage() {
   const queryClient = useQueryClient()
   const { push } = useToast()
   const { data: leads, isLoading } = useQuery({ queryKey: ["leads"], queryFn: leadsApi.list })
-  const { data: campaigns } = useQuery({ queryKey: ["campaigns"], queryFn: campaignsApi.list })
+  const { data: campaigns, isError: campaignsErrored } = useQuery({
+    queryKey: ["campaigns"],
+    queryFn: campaignsApi.list,
+  })
 
   const [stageFilter, setStageFilter] = useState<Stage | "all">("all")
   const [campaignFilter, setCampaignFilter] = useState<string>("all")
@@ -155,6 +158,11 @@ export function LeadPipelinePage() {
             <SelectItem value="late">Late</SelectItem>
           </SelectContent>
         </Select>
+        {campaignsErrored && (
+          <span className="text-xs text-destructive" role="status">
+            Campaign filter unavailable — couldn't load campaigns
+          </span>
+        )}
         {(campaigns?.length ?? 0) > 1 && (
           <Select value={campaignFilter} onValueChange={setCampaignFilter}>
             <SelectTrigger className="w-48">

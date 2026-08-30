@@ -82,7 +82,10 @@ export function LeadDetailPage() {
   })
   const isNotFound = detailError instanceof ApiError && detailError.status === 404
 
-  const { data: campaigns } = useQuery({ queryKey: ["campaigns"], queryFn: campaignsApi.list })
+  const { data: campaigns, isError: campaignsErrored } = useQuery({
+    queryKey: ["campaigns"],
+    queryFn: campaignsApi.list,
+  })
 
   const {
     data: trace,
@@ -277,14 +280,20 @@ export function LeadDetailPage() {
           <p className="text-sm text-muted-foreground mt-1">
             {lead.title || "Title unknown"} at {lead.company} &middot; {lead.industry || "industry unknown"} &middot; {lead.company_size || "size unknown"}
           </p>
-          {(() => {
-            const campaign = campaigns?.find((c) => c.id === lead.campaign_id)
-            return campaign ? (
-              <Badge variant="secondary" className="mt-2">
-                Campaign: {campaign.name}
-              </Badge>
-            ) : null
-          })()}
+          {campaignsErrored ? (
+            <Badge variant="outline" className="mt-2 text-destructive">
+              Campaign unknown — couldn't load campaigns
+            </Badge>
+          ) : (
+            (() => {
+              const campaign = campaigns?.find((c) => c.id === lead.campaign_id)
+              return campaign ? (
+                <Badge variant="secondary" className="mt-2">
+                  Campaign: {campaign.name}
+                </Badge>
+              ) : null
+            })()
+          )}
         </div>
         <div className="flex gap-2 shrink-0">
           <Button

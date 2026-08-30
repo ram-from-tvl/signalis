@@ -149,7 +149,10 @@ export function DataSourcesPage() {
   const [jsonIsSample, setJsonIsSample] = useState(false)
   const [targetCampaignId, setTargetCampaignId] = useState<string | undefined>(undefined)
 
-  const { data: campaigns } = useQuery({ queryKey: ["campaigns"], queryFn: campaignsApi.list })
+  const { data: campaigns, isError: campaignsErrored } = useQuery({
+    queryKey: ["campaigns"],
+    queryFn: campaignsApi.list,
+  })
 
   // Default to whichever campaign is marked default once campaigns load,
   // without overriding a choice the marketer already made.
@@ -216,6 +219,13 @@ export function DataSourcesPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
+            {campaignsErrored && (
+              <p className="text-xs text-destructive">
+                Couldn't load campaigns — new leads will go to whichever campaign is marked
+                default on the server, since targeting can't be chosen right now. Reload the
+                page to try again.
+              </p>
+            )}
             {(campaigns?.length ?? 0) > 0 && (
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="upload-campaign">Assign new leads to</Label>

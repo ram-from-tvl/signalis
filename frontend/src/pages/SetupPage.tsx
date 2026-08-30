@@ -44,12 +44,14 @@ function usePersonaForm(existing?: Persona) {
 function CampaignSwitcher({
   campaigns,
   isLoading,
+  isError,
   selectedId,
   onSelect,
   onNew,
 }: {
   campaigns: CampaignDetail[] | undefined
   isLoading: boolean
+  isError: boolean
   selectedId: string | null
   onSelect: (id: string) => void
   onNew: () => void
@@ -61,7 +63,7 @@ function CampaignSwitcher({
           <CardTitle>Campaigns</CardTitle>
           <CardDescription>Each has its own persona and solution.</CardDescription>
         </div>
-        <Button size="sm" variant="outline" onClick={onNew}>
+        <Button size="sm" variant="outline" onClick={onNew} disabled={isError}>
           <Plus className="h-3.5 w-3.5" /> New
         </Button>
       </CardHeader>
@@ -72,7 +74,10 @@ function CampaignSwitcher({
             <Skeleton className="h-14 w-full" />
           </div>
         )}
-        {!isLoading && (campaigns?.length ?? 0) === 0 && (
+        {isError && (
+          <p className="text-sm text-destructive">Couldn't load campaigns.</p>
+        )}
+        {!isLoading && !isError && (campaigns?.length ?? 0) === 0 && (
           <p className="text-sm text-muted-foreground">
             No campaigns yet — create one to start scoring leads against a real persona.
           </p>
@@ -427,7 +432,13 @@ function CampaignEditor({
 }
 
 export function SetupPage() {
-  const { data: campaigns, isLoading } = useQuery({
+  const {
+    data: campaigns,
+    isLoading,
+    isError,
+    error: campaignsError,
+    refetch: refetchCampaigns,
+  } = useQuery({
     queryKey: ["campaigns"],
     queryFn: campaignsApi.list,
   })
@@ -460,6 +471,7 @@ export function SetupPage() {
         <CampaignSwitcher
           campaigns={campaigns}
           isLoading={isLoading}
+          isError={isError}
           selectedId={creatingNew ? null : selectedId}
           onSelect={(id) => {
             setCreatingNew(false)
@@ -468,7 +480,19 @@ export function SetupPage() {
           onNew={() => setCreatingNew(true)}
         />
 
-        {creatingNew ? (
+        {isError ? (
+          <Card>
+            <CardContent className="py-12 flex flex-col items-center text-center gap-3">
+              <p className="text-sm text-muted-foreground max-w-sm">
+                Couldn't load campaigns.{" "}
+                {campaignsError instanceof Error ? campaignsError.message : "Something went wrong contacting the server."}
+              </p>
+              <Button variant="outline" onClick={() => refetchCampaigns()}>
+                Try again
+              </Button>
+            </CardContent>
+          </Card>
+        ) : creatingNew ? (
           <CampaignEditor
             campaign={null}
             isNew

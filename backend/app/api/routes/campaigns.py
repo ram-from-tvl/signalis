@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.api.deps import get_db
 from app.models import Campaign, Lead, Persona, Solution
@@ -14,7 +14,11 @@ router = APIRouter(prefix="/api/campaigns", tags=["campaigns"])
 
 @router.get("", response_model=list[CampaignDetail])
 def list_campaigns(db: Session = Depends(get_db)):
-    campaigns = db.execute(select(Campaign).order_by(Campaign.created_at.desc())).scalars().all()
+    campaigns = db.execute(
+        select(Campaign)
+        .options(joinedload(Campaign.persona), joinedload(Campaign.solution))
+        .order_by(Campaign.created_at.desc())
+    ).unique().scalars().all()
     lead_counts = dict(
         db.execute(
             select(Lead.campaign_id, func.count(Lead.id)).group_by(Lead.campaign_id)
@@ -41,7 +45,13 @@ def create_campaign(payload: CampaignCreate, db: Session = Depends(get_db)):
         raise HTTPException(400, "solution_id does not refer to an existing solution")
 
     campaign = Campaign(**payload.model_dump())
-    if campaign.is_default:
+    # The very first campaign ever created must become the default, or a
+    # lead left unassigned by the startup backfill (no persona/solution
+    # existed yet at that point) would still have nothing to fall back to
+    # even after a real campaign is created.
+    no_campaigns_exist_yet = db.execute(select(func.count(Campaign.id))).scalar_one() == 0
+    if campaign.is_default or no_campaigns_exist_yet:
+        campaign.is_default = True
         _clear_existing_default(db)
     db.add(campaign)
     db.commit()
@@ -77,6 +87,42 @@ def update_campaign(campaign_id: str, payload: CampaignCreate, db: Session = Dep
     if not db.get(Solution, payload.solution_id):
         raise HTTPException(400, "solution_id does not refer to an existing solution")
 
+    # The UI's whole premise is "each campaign has its own persona and
+    # solution" — editing a persona/solution in place would silently
+    # change every other campaign that happens to reference the same row.
+    # The UI only ever creates a fresh persona+solution per campaign, but
+    # the API itself allows pointing two campaigns at the same one, so
+    # this guard is the actual enforcement of that premise.
+    other_campaign_sharing_persona = db.execute(
+        select(Campaign).where(Campaign.persona_id == payload.persona_id, Campaign.id != campaign_id)
+    ).scalars().first()
+    if other_campaign_sharing_persona:
+        raise HTTPException(
+            409,
+            f"persona_id is already used by campaign '{other_campaign_sharing_persona.name}' — "
+            "editing it here would silently change that campaign too. Create a new persona instead.",
+        )
+    other_campaign_sharing_solution = db.execute(
+        select(Campaign).where(Campaign.solution_id == payload.solution_id, Campaign.id != campaign_id)
+    ).scalars().first()
+    if other_campaign_sharing_solution:
+        raise HTTPException(
+            409,
+            f"solution_id is already used by campaign '{other_campaign_sharing_solution.name}' — "
+            "editing it here would silently change that campaign too. Create a new solution instead.",
+        )
+
+    # Clearing the default on the campaign that currently holds it, with
+    # no replacement in the same request, would leave no fallback for any
+    # campaign-less lead — reject it rather than silently dropping the
+    # invariant. Promoting a *different* campaign to default (via that
+    # campaign's own PUT) is how a marketer actually changes the default.
+    if campaign.is_default and not payload.is_default:
+        raise HTTPException(
+            409,
+            "This is the default campaign — set a different campaign as default "
+            "instead of removing this one's default status directly.",
+        )
     if payload.is_default and not campaign.is_default:
         _clear_existing_default(db)
     for key, value in payload.model_dump().items():
@@ -92,6 +138,12 @@ def delete_campaign(campaign_id: str, db: Session = Depends(get_db)):
     campaign = db.get(Campaign, campaign_id)
     if not campaign:
         raise HTTPException(404, "Campaign not found")
+    if campaign.is_default:
+        raise HTTPException(
+            409,
+            "This is the default campaign — set a different campaign as default "
+            "before deleting this one, so campaign-less leads still have a fallback.",
+        )
     assigned_leads = db.execute(
         select(func.count(Lead.id)).where(Lead.campaign_id == campaign_id)
     ).scalar_one()
