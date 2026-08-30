@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/components/ui/toast-context"
 import { cn } from "@/lib/utils"
+import { useRotatingLabel } from "@/lib/useRotatingLabel"
 import {
   FileSpreadsheet,
   FileJson,
@@ -18,7 +19,26 @@ import {
   UploadCloud,
   Sparkles,
   ThumbsUp,
+  Loader2,
 } from "lucide-react"
+
+const CSV_UPLOAD_STEPS = ["Reading rows...", "Matching existing leads...", "Creating signals..."]
+const JSON_UPLOAD_STEPS = ["Reading events...", "Matching leads by email...", "Creating signals..."]
+
+function UploadProgress({ active, steps }: { active: boolean; steps: string[] }) {
+  const label = useRotatingLabel(steps, active)
+  if (!active) return null
+  return (
+    <div
+      className="flex items-center gap-2 rounded-lg border border-border bg-secondary/40 px-3 py-2"
+      aria-busy="true"
+      aria-live="polite"
+    >
+      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none text-accent" />
+      <span className="text-xs text-muted-foreground tabular-nums">{label}</span>
+    </div>
+  )
+}
 
 function ReportSummary({ report }: { report: IngestionReport }) {
   return (
@@ -275,7 +295,7 @@ export function DataSourcesPage() {
               </Button>
             </div>
             {csvIsSample && <Badge variant="outline">Loaded from bundled sample dataset</Badge>}
-            {csvMutation.isPending && <p className="text-sm text-muted-foreground">Uploading...</p>}
+            <UploadProgress active={csvMutation.isPending} steps={CSV_UPLOAD_STEPS} />
             {csvReport && <ReportSummary report={csvReport} />}
           </CardContent>
         </Card>
@@ -322,7 +342,7 @@ export function DataSourcesPage() {
               </Button>
             </div>
             {jsonIsSample && <Badge variant="outline">Loaded from bundled sample dataset</Badge>}
-            {jsonMutation.isPending && <p className="text-sm text-muted-foreground">Uploading...</p>}
+            <UploadProgress active={jsonMutation.isPending} steps={JSON_UPLOAD_STEPS} />
             {jsonReport && <ReportSummary report={jsonReport} />}
           </CardContent>
         </Card>

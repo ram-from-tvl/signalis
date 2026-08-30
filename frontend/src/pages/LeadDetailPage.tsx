@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ClickSpark } from "@/components/ui/click-spark"
+import { CopyButton } from "@/components/ui/copy-button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
@@ -17,8 +18,9 @@ import { ConfidenceTrendChart } from "@/components/leads/ConfidenceTrendChart"
 import { SignalHistoryTab } from "@/components/leads/SignalHistoryTab"
 import { ApprovePlanButton } from "@/components/leads/ApprovePlanButton"
 import { useToast } from "@/components/ui/toast-context"
-import { ArrowLeft, Sparkles, TrendingUp, CheckCircle2, XCircle, ShieldAlert } from "lucide-react"
+import { ArrowLeft, Sparkles, TrendingUp, CheckCircle2, XCircle, ShieldAlert, Search, Loader2 } from "lucide-react"
 import { parseUtcTimestamp } from "@/lib/utils"
+import { toolApprovalQuestion } from "@/lib/agents"
 
 function formatDate(iso: string) {
   return parseUtcTimestamp(iso).toLocaleString(undefined, {
@@ -188,19 +190,19 @@ export function LeadDetailPage() {
       invalidateAll()
       if (resolution.followup) {
         push({
-          title: "Tool call approved",
-          description: `Persona Fit resumed but immediately hit another approval gate (${resolution.followup.tool_name}). Review it below to continue.`,
+          title: "Check confirmed",
+          description: "One more check needs your OK before we can continue — review it below.",
           variant: "info",
         })
       } else {
         push({
-          title: "Tool call approved",
-          description: "Persona Fit resumed and completed. Click \"Regenerate Plan\" to continue the pipeline.",
+          title: "Check confirmed",
+          description: "Click \"Regenerate Plan\" to continue.",
           variant: "success",
         })
       }
     },
-    onError: (err: Error) => push({ title: "Could not approve tool call", description: err.message, variant: "error" }),
+    onError: (err: Error) => push({ title: "Couldn't confirm that check", description: err.message, variant: "error" }),
   })
 
   const rejectToolCall = useMutation({
@@ -209,15 +211,15 @@ export function LeadDetailPage() {
       invalidateAll()
       if (resolution.followup) {
         push({
-          title: "Tool call rejected",
-          description: `Persona Fit resumed but immediately hit another approval gate (${resolution.followup.tool_name}). Review it below.`,
+          title: "Check skipped",
+          description: "One more check needs your OK before we can continue — review it below.",
           variant: "info",
         })
       } else {
-        push({ title: "Tool call rejected", variant: "info" })
+        push({ title: "Check skipped", variant: "info" })
       }
     },
-    onError: (err: Error) => push({ title: "Could not reject tool call", description: err.message, variant: "error" }),
+    onError: (err: Error) => push({ title: "Couldn't skip that check", description: err.message, variant: "error" }),
   })
 
   if (isLoading) {
@@ -304,7 +306,11 @@ export function LeadDetailPage() {
             }}
             disabled={simulateSignal.isPending || runPipeline.isPending}
           >
-            <TrendingUp className="h-4 w-4" />
+            {simulatingSignal && simulateSignal.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+            ) : (
+              <TrendingUp className="h-4 w-4" />
+            )}
             {simulatingSignal && simulateSignal.isPending ? "Simulating..." : "Simulate New Signal"}
           </Button>
           <Button variant="accent" onClick={() => runPipeline.mutate()} disabled={runPipeline.isPending}>
@@ -346,6 +352,21 @@ export function LeadDetailPage() {
                 {!!latestClassification.persona_fit_result.missing_data?.length && (
                   <p className="text-xs text-warning mt-1">
                     Missing data: {latestClassification.persona_fit_result.missing_data.join(", ")}
+                  </p>
+                )}
+                {!!latestClassification.persona_fit_result.tools_used?.items.length && (
+                  <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                    <span className="text-xs text-muted-foreground">External checks used:</span>
+                    {latestClassification.persona_fit_result.tools_used.items.map((t) => (
+                      <Badge key={t.tool} variant="outline" className="text-[10px]">
+                        {t.label}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+                {latestClassification.persona_fit_result.tools_used?.evidence_unavailable && (
+                  <p className="text-xs text-muted-foreground mt-2">
+                    Couldn't confirm which external checks ran for this assessment.
                   </p>
                 )}
               </div>
@@ -410,40 +431,33 @@ export function LeadDetailPage() {
           <Card key={request.id} className="border-warning/50">
             <CardHeader className="flex-row items-center justify-between gap-4 flex-wrap">
               <div className="flex items-center gap-2">
-                <ShieldAlert className="h-4 w-4 text-warning shrink-0" />
+                <Search className="h-4 w-4 text-warning shrink-0" />
                 <div>
-                  <CardTitle>Pending Tool Approval</CardTitle>
-                  <CardDescription>
-                    Persona Fit paused before calling <span className="font-mono">{request.tool_name}</span> on
-                    the enrichment MCP server
-                  </CardDescription>
+                  <CardTitle>One More Check Before Continuing</CardTitle>
+                  <CardDescription>{toolApprovalQuestion(request.tool_name)}</CardDescription>
                 </div>
               </div>
-              <Badge variant="warning">Awaiting Approval</Badge>
+              <Badge variant="warning">Awaiting Your OK</Badge>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
-              <div className="rounded-lg bg-secondary/50 p-3 text-sm">
-                <p className="font-semibold mb-1">Tool input</p>
-                <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono">
-                  {JSON.stringify(request.tool_input, null, 2)}
-                </pre>
-              </div>
               <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={() => approveToolCall.mutate(request.id)}
-                  disabled={approveToolCall.isPending || rejectToolCall.isPending}
-                >
-                  <CheckCircle2 className="h-4 w-4" /> Approve Tool Call
-                </Button>
+                <ClickSpark>
+                  <Button
+                    size="sm"
+                    variant="default"
+                    onClick={() => approveToolCall.mutate(request.id)}
+                    disabled={approveToolCall.isPending || rejectToolCall.isPending}
+                  >
+                    <CheckCircle2 className="h-4 w-4" /> Go Ahead
+                  </Button>
+                </ClickSpark>
                 <Button
                   size="sm"
                   variant="outline"
                   onClick={() => rejectToolCall.mutate(request.id)}
                   disabled={approveToolCall.isPending || rejectToolCall.isPending}
                 >
-                  <XCircle className="h-4 w-4" /> Reject
+                  <XCircle className="h-4 w-4" /> Skip This Check
                 </Button>
               </div>
             </CardContent>
@@ -512,10 +526,16 @@ export function LeadDetailPage() {
                       <span className="absolute left-4 top-4 flex h-6 w-6 items-center justify-center rounded-full bg-secondary text-xs font-semibold text-secondary-foreground">
                         {i + 1}
                       </span>
-                      <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        <Badge variant="secondary">Day {tp.day_offset}</Badge>
-                        <Badge variant="outline" className="capitalize">{tp.channel}</Badge>
-                        <span className="text-sm font-semibold">{tp.content_theme}</span>
+                      <div className="flex items-center gap-2 mb-2 flex-wrap justify-between">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge variant="secondary">Day {tp.day_offset}</Badge>
+                          <Badge variant="outline" className="capitalize">{tp.channel}</Badge>
+                          <span className="text-sm font-semibold">{tp.content_theme}</span>
+                        </div>
+                        <CopyButton
+                          value={tp.message_copy}
+                          label={tp.channel.toLowerCase() === "linkedin" ? "Copy LinkedIn message" : `Copy ${tp.channel}`}
+                        />
                       </div>
                       <p className="text-sm text-muted-foreground whitespace-pre-wrap">{tp.message_copy}</p>
                     </li>

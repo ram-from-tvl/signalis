@@ -350,6 +350,62 @@ def test_persona_fit_attaches_exa_mcp_server(db_session, sample_lead):
     assert "signalis-enrichment" in mcp_names
 
 
+def test_persona_fit_reports_tools_used_from_the_real_session(db_session, sample_lead):
+    """tools_used must come from an independent TrueForge session-events
+    check (get_tool_call_results), the same "prove it happened" method
+    outreach_planner uses for verified_email — not from the model's own
+    self-reported claim."""
+    tool_results = [
+        {"tool_name": "classify_company_industry", "result": {"industry": "SaaS"}},
+    ]
+    with (
+        patch(
+            "app.agents.persona_fit.run_agent_reasoning",
+            return_value=({"fit": "full_fit", "reasoning": "test", "missing_data": []}, "session-pqr"),
+        ),
+        patch("app.agents.tool_activity.get_tool_call_results", return_value=tool_results) as mock_results,
+    ):
+        result, _ = run_persona_fit(db_session, sample_lead, None, None)
+
+    mock_results.assert_called_once()
+    assert mock_results.call_args[0][0] == "session-pqr"
+    assert result["tools_used"] == {
+        "items": [{"tool": "classify_company_industry", "label": "Looked up the company's industry"}],
+        "evidence_unavailable": False,
+    }
+
+
+def test_persona_fit_reports_no_tools_used_when_none_genuinely_ran(db_session, sample_lead):
+    with (
+        patch(
+            "app.agents.persona_fit.run_agent_reasoning",
+            return_value=({"fit": "full_fit", "reasoning": "test", "missing_data": []}, "session-stu"),
+        ),
+        patch("app.agents.tool_activity.get_tool_call_results", return_value=[]),
+    ):
+        result, _ = run_persona_fit(db_session, sample_lead, None, None)
+
+    assert result["tools_used"] == {"items": [], "evidence_unavailable": False}
+
+
+def test_persona_fit_marks_evidence_unavailable_when_events_fetch_fails(db_session, sample_lead):
+    """A TrueForge outage while confirming tool usage must not look
+    identical to "genuinely no external checks ran" — the UI needs to be
+    able to tell those apart (see test_tool_activity.py)."""
+    from app.core.trueforge import TrueForgeError
+
+    with (
+        patch(
+            "app.agents.persona_fit.run_agent_reasoning",
+            return_value=({"fit": "full_fit", "reasoning": "test", "missing_data": []}, "session-vwx"),
+        ),
+        patch("app.agents.tool_activity.get_tool_call_results", side_effect=TrueForgeError("boom")),
+    ):
+        result, _ = run_persona_fit(db_session, sample_lead, None, None)
+
+    assert result["tools_used"] == {"items": [], "evidence_unavailable": True}
+
+
 def test_run_persona_fit_reuses_completed_run_instead_of_hitting_gate_again(db_session, sample_lead):
     """Regression test for "Regeneration repeats approval gate": once a
     Persona Fit AgentRun has completed (e.g. via resume_persona_fit after a

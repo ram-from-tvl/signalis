@@ -4,8 +4,8 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
 import { AgentRunFollowupPanel } from "@/components/leads/AgentRunFollowupPanel"
-import { AGENT_ORDER, AGENT_LABELS, AGENT_ACCENT_VARS, AGENT_ICONS } from "@/lib/agents"
-import { Clock } from "lucide-react"
+import { AGENT_ORDER, AGENT_LABELS, AGENT_ACCENT_VARS, AGENT_ICONS, toolActivityLabel } from "@/lib/agents"
+import { Clock, Search } from "lucide-react"
 import { cn, parseUtcTimestamp } from "@/lib/utils"
 import type { AgentRun } from "@/types/api"
 
@@ -47,6 +47,42 @@ function oneLineOutcome(run: AgentRun): string | null {
   }
   if (run.agent_name === "explainability") return "Narrative complete"
   return null
+}
+
+// "unverified"/"verification_failed"/"evidence_unavailable" are all
+// non-genuine email_verification_status outcomes (never ran, ran but the
+// tool itself failed, or we couldn't prove it ran) — only an actual Hunter
+// status means verify_email genuinely completed. See
+// _extract_email_verification's docstring in
+// backend/app/agents/outreach_planner.py for the full status contract.
+const NON_GENUINE_EMAIL_STATUSES = new Set(["unverified", "verification_failed", "evidence_unavailable"])
+
+// Plain-language "what external checks actually ran" for a single run —
+// persona_fit persists a structured {items, evidence_unavailable} shape
+// (see backend/app/agents/tool_activity.py), outreach_planner instead
+// persists a single verified_email/email_verification_status pair; both
+// are read here rather than showing raw MCP/tool_call detail.
+// evidence_unavailable distinguishes "we asked and nothing ran" (empty
+// chips, evidence_unavailable false) from "we couldn't ask" (empty chips,
+// evidence_unavailable true, e.g. a TrueForge outage) — both must render
+// differently from "genuinely nothing to show."
+function toolActivity(run: AgentRun): { chips: string[]; evidenceUnavailable: boolean } {
+  const output = run.output
+  if (run.agent_name === "persona_fit" && output.tools_used && typeof output.tools_used === "object") {
+    const toolsUsed = output.tools_used as { items: { tool: string; label: string }[]; evidence_unavailable: boolean }
+    return {
+      chips: (toolsUsed.items ?? []).map((t) => t.label),
+      evidenceUnavailable: !!toolsUsed.evidence_unavailable,
+    }
+  }
+  const verificationStatus = output.email_verification_status
+  if (run.agent_name === "outreach_planner" && typeof verificationStatus === "string") {
+    if (!NON_GENUINE_EMAIL_STATUSES.has(verificationStatus)) {
+      return { chips: [toolActivityLabel("verify_email")], evidenceUnavailable: false }
+    }
+    return { chips: [], evidenceUnavailable: verificationStatus === "evidence_unavailable" }
+  }
+  return { chips: [], evidenceUnavailable: false }
 }
 
 // Five dots/segments, one per agent in the pipeline's fixed order, colored
@@ -158,6 +194,7 @@ export function AgentTraceTab({
               const accentVar = AGENT_ACCENT_VARS[run.agent_name] ?? "--border"
               const outcome = oneLineOutcome(run)
               const duration = formatDuration(run.started_at, run.completed_at)
+              const { chips: toolChips, evidenceUnavailable } = toolActivity(run)
               return (
                 <AccordionItem key={run.id} value={run.id}>
                   <AccordionTrigger className="px-2">
@@ -195,6 +232,22 @@ export function AgentTraceTab({
                     <p className="text-xs text-muted-foreground mb-2">{run.input_summary}</p>
                     <p className="text-sm leading-relaxed">{run.reasoning}</p>
                     <p className="mt-2 text-[11px] text-muted-foreground/70">{formatDate(run.started_at)}</p>
+                    {toolChips.length > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap mt-2">
+                        <Search className="h-3 w-3 text-muted-foreground" />
+                        <span className="text-xs text-muted-foreground">External checks used:</span>
+                        {toolChips.map((label) => (
+                          <Badge key={label} variant="outline" className="text-[10px]">
+                            {label}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    {evidenceUnavailable && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Couldn't confirm which external checks ran for this step.
+                      </p>
+                    )}
                     {run.can_ask_followup ? (
                       <AgentRunFollowupPanel leadId={leadId} agentRunId={run.id} />
                     ) : (

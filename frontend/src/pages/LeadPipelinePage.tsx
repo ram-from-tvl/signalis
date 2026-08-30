@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { campaignsApi, leadsApi, pipelineApi } from "@/api/endpoints"
@@ -15,27 +15,13 @@ import { Input } from "@/components/ui/input"
 import { useToast } from "@/components/ui/toast-context"
 import { AGENT_ORDER, AGENT_LABELS } from "@/lib/agents"
 import { parseUtcTimestamp } from "@/lib/utils"
+import { useRotatingLabel } from "@/lib/useRotatingLabel"
 import { Sparkles, ArrowUpDown, Users, Loader2, Search } from "lucide-react"
 import { motion } from "motion/react"
 
 type SortKey = "name" | "confidence" | "created_at"
 
-// Bulk pipeline runs span N leads at once, so there's no single lead to poll
-// a real per-agent trace for — this rotates through the pipeline's real 5
-// agent names as an honest "here's the kind of work happening" cue rather
-// than a generic spinner, without inventing per-lead progress tracking.
-function useRotatingAgentLabel(active: boolean, intervalMs = 1800) {
-  const [index, setIndex] = useState(0)
-  useEffect(() => {
-    if (!active) {
-      setIndex(0)
-      return
-    }
-    const id = setInterval(() => setIndex((i) => (i + 1) % AGENT_ORDER.length), intervalMs)
-    return () => clearInterval(id)
-  }, [active, intervalMs])
-  return AGENT_LABELS[AGENT_ORDER[index]]
-}
+const AGENT_LABEL_SEQUENCE = AGENT_ORDER.map((name) => AGENT_LABELS[name])
 
 export function LeadPipelinePage() {
   const queryClient = useQueryClient()
@@ -69,7 +55,7 @@ export function LeadPipelinePage() {
     onError: (err: Error) => push({ title: "Pipeline run failed", description: err.message, variant: "error" }),
   })
 
-  const rotatingAgentLabel = useRotatingAgentLabel(runPipeline.isPending)
+  const rotatingAgentLabel = useRotatingLabel(AGENT_LABEL_SEQUENCE, runPipeline.isPending)
 
   const filteredSorted = useMemo(() => {
     if (!leads) return []

@@ -12,7 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { KeyValueBuilder } from "@/components/ui/key-value-builder"
 import { useToast } from "@/components/ui/toast-context"
 import { cn, parseUtcTimestamp } from "@/lib/utils"
-import { Check, Plus, Star, Users } from "lucide-react"
+import { Check, Plus, Star, Users, Loader2 } from "lucide-react"
 
 const CHANNEL_OPTIONS = ["email", "linkedin", "phone", "events"]
 
@@ -269,7 +269,11 @@ function CampaignEditor({
               onClick={() => setDefaultMutation.mutate()}
               disabled={setDefaultMutation.isPending}
             >
-              <Star className="h-3.5 w-3.5" />
+              {setDefaultMutation.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+              ) : (
+                <Star className="h-3.5 w-3.5" />
+              )}
               {setDefaultMutation.isPending ? "Setting..." : "Set as default"}
             </Button>
           )}
@@ -418,6 +422,9 @@ function CampaignEditor({
 
       <div className="flex items-center gap-3">
         <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+          {saveMutation.isPending && (
+            <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+          )}
           {saveMutation.isPending ? "Saving..." : isNew ? "Create Campaign" : "Save Campaign"}
         </Button>
         {campaign && !isNew && (

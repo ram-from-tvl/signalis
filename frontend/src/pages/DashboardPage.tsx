@@ -21,7 +21,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts"
-import { Users, FileCheck, Gauge, Timer, ListOrdered } from "lucide-react"
+import { Users, FileCheck, Gauge, Timer, ListOrdered, Loader2 } from "lucide-react"
 
 const STAGE_COLORS: Record<string, string> = {
   early: "hsl(var(--stage-early))",
@@ -292,7 +292,11 @@ export function DashboardPage() {
             onClick={() => runRanking.mutate()}
             disabled={runRanking.isPending || !stats.total_leads}
           >
-            <ListOrdered className="h-4 w-4" />
+            {runRanking.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+            ) : (
+              <ListOrdered className="h-4 w-4" />
+            )}
             {runRanking.isPending ? "Ranking..." : "Rank Pipeline"}
           </Button>
         </CardHeader>
