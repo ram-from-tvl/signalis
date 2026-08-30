@@ -7,7 +7,7 @@ is still no migration framework in this build: new tables are created via
 nullable columns added to an already-existing table
 (`agent_runs.trueforge_session_id`, `outreach_plans.verified_email`,
 `outreach_plans.email_verification_status`,
-`outreach_plans.email_verification_reason`), which `create_all` does not
+`outreach_plans.email_verification_reason`, `leads.campaign_id`), which `create_all` does not
 retrofit onto existing rows. Those cases are handled by a small, purpose-built
 additive-only patcher, `app/db/migrations.py::run_startup_migrations`, run
 right after `create_all` on every startup: it inspects each table's current
@@ -15,7 +15,12 @@ columns and issues `ALTER TABLE ... ADD COLUMN` only for ones genuinely
 missing, so it is a no-op on a fresh database (where `create_all` already
 created the column) and idempotent on repeated runs. This was judged the
 right scope for a handful of nullable-column additions; see DECISIONS.md
-for why Alembic was not pulled in for it. Tables that represent a decision the system
+for why Alembic was not pulled in for it. `leads.campaign_id` additionally
+needed a one-time *data* backfill, not just a schema column — existing leads
+with no campaign are assigned to a newly-created or already-existing default
+campaign by `backfill_default_campaign` (also in `app/db/migrations.py`),
+run on every startup after the schema migration, idempotent once every lead
+has a `campaign_id`. Tables that represent a decision the system
 makes (stage classifications, outreach plans) are append-only history tables
 rather than rows that get overwritten in place, so the full reasoning history
 behind any current state is always inspectable.
@@ -37,8 +42,8 @@ Defines the marketer's target buyer profile.
 | custom_traits | JSON | open-ended extra criteria (buying committee size, priorities, etc.) |
 | created_at | datetime | |
 
-Only the most recently created persona is treated as "active" by the pipeline
-(see DECISIONS.md for why multi-persona support was scoped out).
+A persona is paired with a solution through a `campaign` (see below) — the
+pipeline never picks a persona/solution on its own.
 
 ### solutions
 
@@ -59,6 +64,27 @@ Channel selection is stored directly as a JSON column on `solutions` rather
 than as a separate preferences table, since channels are solution-scoped, not
 user- or workspace-scoped, in this build's data model (see DECISIONS.md).
 
+### campaigns
+
+Pairs one persona with one solution — the unit a lead is actually scored
+against, so multiple GTM motions (e.g. CTOs in the morning, VPs of Marketing
+in the afternoon) can run concurrently without sharing one global config.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | string (uuid hex) | primary key |
+| name | string | |
+| persona_id | FK -> personas.id | |
+| solution_id | FK -> solutions.id | |
+| is_default | boolean | at most one campaign at a time; a lead with no `campaign_id` falls back to this one |
+| created_at | datetime | |
+
+Exactly one `is_default=True` row is an application-enforced invariant (no
+partial-unique-index support in SQLite for this) — see `_clear_existing_default`
+in `app/api/routes/campaigns.py`. A persona/solution is never shared across
+two campaigns; the API rejects an edit that would silently repoint a
+different campaign's persona or solution.
+
 ### leads
 
 One row per person/account being tracked.
@@ -73,6 +99,7 @@ One row per person/account being tracked.
 | industry | string | |
 | geography | string | |
 | email | string | used as the primary dedupe key across CRM and website uploads |
+| campaign_id | FK -> campaigns.id, nullable | which campaign's persona/solution this lead is scored against; falls back to the default campaign if unset |
 | created_at | datetime | |
 
 ### signals
@@ -166,7 +193,7 @@ creation; a new classification supersedes the previous one via
 | stage | string | `early` / `mid` / `late` |
 | confidence | float | 0.0-1.0 |
 | justification | text | plain-language explanation from the Buying Stage Orchestrator Agent |
-| persona_fit_result | JSON | snapshot of the Persona Fit Agent's output at classification time |
+| persona_fit_result | JSON | snapshot of the Persona Fit Agent's output at classification time, including `tools_used: {items: [{tool, label}], evidence_unavailable}` — which external checks genuinely ran, in plain language, confirmed via TrueForge's session events (see `app/agents/tool_activity.py`) |
 | based_on_agent_run_id | FK -> agent_runs.id, nullable | |
 | requires_approval | boolean | true when confidence fell below the approval threshold |
 | approval_status | string | `auto_approved` / `pending_approval` / `approved` / `rejected` |
@@ -239,21 +266,22 @@ leads were ranked.
 ## Relationships at a glance
 
 ```
-personas            solutions
-   (latest active)      (latest active)
-        \                /
-         \              /
-              leads
-                |
-          ------+------
-          |            |
-       signals    agent_runs
-          |            |----> agent_run_followups
-          |            |----> tool_approval_requests
-          |            |
-          +--> stage_classifications --> outreach_plans
-                       |                       |
-                       +----> approval_events <+
-                       |
-                       +----> pipeline_rankings (reads across all leads at once)
+personas    solutions
+      \        /
+       \      /
+      campaigns  (persona + solution + is_default)
+           |
+         leads
+           |
+     ------+------
+     |            |
+  signals    agent_runs
+     |            |----> agent_run_followups
+     |            |----> tool_approval_requests
+     |            |
+     +--> stage_classifications --> outreach_plans
+                  |                       |
+                  +----> approval_events <+
+                  |
+                  +----> pipeline_rankings (reads across all leads at once)
 ```

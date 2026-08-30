@@ -28,6 +28,49 @@ once a `1.0.0` tag is cut.
   `backend/requirements.txt`; CI now installs from the pinned lockfile
   instead of an unconstrained or hardcoded dependency list.
 
+## [0.10.0] — Copy buttons, plain-language agent activity, better loading states
+
+### Added
+- A copy-to-clipboard button on every outreach touchpoint (email and
+  LinkedIn), with an inline failure state and toast if clipboard access is
+  blocked (#22).
+- `app/agents/tool_activity.py`: which external checks an agent genuinely
+  ran, translated into plain language and surfaced on the classification
+  card and Agent Trace tab as "External checks used," instead of raw
+  MCP/tool jargon — backed by an independent check against the agent's own
+  session events (`extract_tools_used`), the same method already used for
+  email verification, distinguishing a genuine success from a failed check
+  or unconfirmable evidence rather than collapsing all three into one state
+  (#22).
+- A spinner + rotating status text on CSV/JSON upload, replacing a bare
+  "Uploading..." with no other feedback (#22).
+
+### Changed
+- The pending tool-approval card no longer names "MCP," a raw tool name, or
+  dumps raw JSON — it now asks a plain question ("We'd like to look up this
+  company's industry using an outside data source...") (#22).
+
+## [0.9.0] — Campaigns: leads scored against their own persona and solution
+
+### Added
+- `Campaign` model pairing one persona with one solution, so multiple GTM
+  motions (e.g. CTOs in the morning, VPs of Marketing in the afternoon) run
+  concurrently instead of sharing one global "active" persona/solution.
+  `Lead.campaign_id` plus a one-time data backfill for existing leads
+  (`backfill_default_campaign`) (#21).
+- Campaigns API: `GET/POST /api/campaigns`, `GET/PUT/DELETE /api/campaigns/{id}`,
+  `POST /api/campaigns/{id}/assign-leads`, enforcing "exactly one default
+  campaign" and rejecting edits that would silently share a
+  persona/solution across two campaigns (#21).
+- Setup screen rebuilt around a campaign switcher + per-campaign editor,
+  replacing the single global persona/solution form (#21).
+
+### Fixed
+- CRM uploads with no explicit campaign now land on the default campaign
+  instead of staying genuinely unassigned (#21).
+- Four frontend pages silently ignored a failed campaigns fetch instead of
+  surfacing it (#21).
+
 ## [0.8.0] — Chain-of-thought agent trace and bento dashboard
 
 ### Changed
