@@ -36,20 +36,59 @@ phone, events). This is also where channel selection lives.
 ### `GET /api/solutions/{id}`, `PUT /api/solutions/{id}`, `DELETE /api/solutions/{id}`
 Standard CRUD for a single solution.
 
-Note: the pipeline always uses the most recently created persona and solution
-as the "active" configuration. Multi-persona support is a scoped-out stretch
-goal documented in DECISIONS.md.
+## Campaigns
+
+A campaign pairs one persona with one solution — the unit a lead is scored
+against. This is how multiple concurrent GTM motions (e.g. CTOs in the
+morning, VPs of Marketing in the afternoon) stay independent instead of
+sharing one global persona/solution.
+
+### `GET /api/campaigns`
+List all campaigns, most recent first, each with its persona, solution, and
+lead count joined in.
+
+### `POST /api/campaigns`
+Body: `{"name": "...", "persona_id": "...", "solution_id": "...", "is_default": false}`.
+The very first campaign ever created always becomes the default, regardless
+of the `is_default` value sent — otherwise a lead left unassigned before any
+campaign existed would have nothing to fall back to. Returns `400` if
+`persona_id`/`solution_id` don't exist.
+
+### `GET /api/campaigns/{id}`
+Full detail: persona, solution, and current lead count.
+
+### `PUT /api/campaigns/{id}`
+Same body as create. Returns `409` if `persona_id`/`solution_id` is already
+used by a different campaign (editing it here would silently change that
+other campaign too), or if the request would clear `is_default` on the
+current default without promoting a replacement in the same call.
+
+### `DELETE /api/campaigns/{id}`
+Returns `409` if this is the default campaign, or if any leads are still
+assigned to it — reassign or promote a new default first.
+
+### `POST /api/campaigns/{id}/assign-leads`
+Body: `{"lead_ids": ["..."]}`. Moves the given leads onto this campaign.
+Returns `400` if any lead id doesn't exist.
+
+Pipeline resolution: a lead is scored against `lead.campaign_id`'s persona
+and solution; a lead with no campaign assigned falls back to whichever
+campaign has `is_default=True`. See [DATA_SCHEMA.md](DATA_SCHEMA.md) for the
+schema and `_resolve_campaign` in `backend/app/services/pipeline.py` for the
+resolution logic.
 
 ## Data ingestion
 
 ### `POST /api/uploads/crm-csv`
-Multipart file upload. Expects a CSV with at minimum `name` and `company`
-columns, plus optional `title`, `company_size`, `industry`, `geography`,
-`email`, and CRM activity columns (`deal_stage`, `last_activity`,
-`last_activity_date`, `notes`, `deal_value`). Rows missing `name` or
-`company` are skipped and reported, not fatal. Leads are deduplicated by
-email first, then by (name, company). Returns an ingestion report: rows
-parsed/skipped, reasons for any skips, and counts of leads/signals created.
+Multipart file upload, plus an optional `campaign_id` form field. Expects a
+CSV with at minimum `name` and `company` columns, plus optional `title`,
+`company_size`, `industry`, `geography`, `email`, and CRM activity columns
+(`deal_stage`, `last_activity`, `last_activity_date`, `notes`, `deal_value`).
+Rows missing `name` or `company` are skipped and reported, not fatal. Leads
+are deduplicated by email first, then by (name, company). New leads are
+assigned to `campaign_id` if provided, otherwise to whichever campaign is
+marked default. Returns an ingestion report: rows parsed/skipped, reasons
+for any skips, and counts of leads/signals created.
 
 ### `POST /api/uploads/website-events`
 Multipart file upload. Expects a JSON array of event objects, each with a

@@ -20,8 +20,11 @@ after editing).
    and `Signal` rows, tolerating missing or malformed fields rather than
    failing the whole batch.
 2. Triggering the pipeline (per-lead or for the whole list) runs
-   `app/services/pipeline.py`, which invokes the LangGraph `StateGraph`
-   (`app/agents/graph.py`) for each lead.
+   `app/services/pipeline.py`, which first resolves which campaign (and
+   therefore which persona and solution) the lead belongs to
+   (`_resolve_campaign` — falls back to the default campaign if the lead
+   has none), then invokes the LangGraph `StateGraph` (`app/agents/graph.py`)
+   for that lead.
 3. Each of the five graph nodes — Signal Extraction, Persona Fit, Buying
    Stage Orchestrator, Outreach Planner, Explainability — delegates its
    actual reasoning to a session/turn on the local TrueForge harness rather
@@ -29,12 +32,14 @@ after editing).
    [AGENT_GRAPH.md](AGENT_GRAPH.md) for the full node-by-node breakdown and
    the one real conditional edge (the confidence-threshold branch).
 4. The Persona Fit node's reasoning is grounded by genuine tool calls through
-   TrueForge's MCP layer to two remote servers: an enrichment server
-   (`app/mcp_tools/enrichment_server.py`) for firmographic classification,
-   and a research server (`app/mcp_tools/research_server.py`) that calls the
-   live Tavily search API for recent company news, funding, and hiring
-   signals — neither is an in-process function call embedded in the agent's
-   own code.
+   TrueForge's MCP layer to three remote servers: an enrichment server
+   (`app/mcp_tools/enrichment_server.py`) for firmographic classification, a
+   research server (`app/mcp_tools/research_server.py`) calling the live
+   Tavily search API, and an Exa server (`app/mcp_tools/exa_server.py`) for
+   a differently-sourced semantic search — none is an in-process function
+   call embedded in the agent's own code. The Outreach Planner node
+   similarly calls a Hunter.io server (`app/mcp_tools/hunter_server.py`) to
+   verify the lead's email is deliverable before finalizing copy.
 5. The Buying Stage node's signal-strength score is computed by running
    generated Python inside a Daytona sandbox (`app/core/sandbox.py`), with
    an equivalent local fallback if the sandbox is briefly unreachable.

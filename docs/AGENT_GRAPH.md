@@ -45,7 +45,9 @@ below for the full pause/approve/reject mechanics.
    the `signals` rows in place and is handed forward as a summary.
 
 2. **Persona Fit Agent** receives the lead's firmographic profile plus the
-   currently active persona and solution ICP, and has three MCP servers
+   persona and solution ICP from the lead's assigned campaign (or the
+   default campaign, if none is assigned — see DATA_SCHEMA.md), and has
+   three MCP servers
    attached: `signalis-enrichment`, `signalis-research`, and `signalis-exa`.
    When the lead's industry or company size is missing or worth verifying,
    it genuinely calls the `classify_company_industry` and/or
@@ -65,7 +67,12 @@ below for the full pause/approve/reject mechanics.
    `mismatch`), reasoning, and any missing data it had to work around. This
    result is handed to both the Buying Stage Orchestrator (fit context
    informs how much weight to give ambiguous signals) and later to the
-   Outreach Planner (fit context shapes message tone).
+   Outreach Planner (fit context shapes message tone). Which of these tools
+   genuinely ran — confirmed via TrueForge's own session events, not the
+   model's self-report — is also translated into a plain-language "External
+   checks used" list (`app/agents/tool_activity.py`) and surfaced on the
+   lead's classification card and Agent Trace tab, instead of raw tool/MCP
+   names.
 
 3. **Buying Stage Orchestrator Agent** receives the lead's full signal
    history (all `signals`, not just the newly extracted ones, within the
@@ -91,7 +98,7 @@ below for the full pause/approve/reject mechanics.
    regardless of branch, still requires a separate approval step.
 
 5. **Outreach Planner Agent** receives the stage, confidence, persona fit
-   result, active persona, active solution, and the lead's email, and
+   result, the campaign's persona and solution, and the lead's email, and
    returns a 3-5 touchpoint micro-plan with day offsets, channels, content
    themes, and example message copy. The resulting `outreach_plans` row
    always starts as `pending_approval`. Its system instruction is

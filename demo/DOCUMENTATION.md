@@ -173,10 +173,10 @@ its structured output (`app/core/trueforge.py`).
 | # | Agent | Module | What it does |
 |---|---|---|---|
 | 1 | **Signal Extraction** | `app/agents/signal_extraction.py` | Receives every raw, not-yet-classified `signals` row for the lead. Returns a normalized `event_type` and `intent_stage_hint` per record, updating the `signals` rows in place. |
-| 2 | **Persona Fit** | `app/agents/persona_fit.py` | Receives the lead's firmographic profile plus the active persona/solution ICP. Has three MCP servers attached (`signalis-enrichment`, `signalis-research`, `signalis-exa`) and genuinely calls them when useful. Returns a fit classification (`full_fit` / `partial_fit` / `mismatch`), reasoning, and missing-data notes. |
+| 2 | **Persona Fit** | `app/agents/persona_fit.py` | Receives the lead's firmographic profile plus the persona/solution ICP from the lead's assigned campaign (or the default campaign). Has three MCP servers attached (`signalis-enrichment`, `signalis-research`, `signalis-exa`) and genuinely calls them when useful. Returns a fit classification (`full_fit` / `partial_fit` / `mismatch`), reasoning, and missing-data notes. |
 | 3 | **Buying Stage Orchestrator** | `app/agents/buying_stage.py` | Receives the lead's full signal history plus the persona fit result. Computes a recency/strength-weighted signal score by executing generated Python in a Daytona sandbox (or a local fallback) before calling the model. Returns `stage`, `confidence`, and a `justification`. This node's confidence score drives the pipeline's one real conditional branch. |
 | — | **Conditional edge** | (in `graph.py`) | If confidence is below `confidence_approval_threshold` (default `0.5`), the classification is flagged `requires_approval=True` / `pending_approval`. Both branches still proceed to plan generation. |
-| 4 | **Outreach Planner** | `app/agents/outreach_planner.py` | Receives stage, confidence, persona fit, active persona/solution, and the lead's email. Returns a 3–5 touchpoint micro-plan (day offsets, channels, content themes, message copy). Has the `signalis-hunter` MCP server attached and genuinely verifies the lead's email before finalizing copy. Also consults a TrueForge **skill** for copywriting craft guidance. |
+| 4 | **Outreach Planner** | `app/agents/outreach_planner.py` | Receives stage, confidence, persona fit, the campaign's persona/solution, and the lead's email. Returns a 3–5 touchpoint micro-plan (day offsets, channels, content themes, message copy). Has the `signalis-hunter` MCP server attached and genuinely verifies the lead's email before finalizing copy. Also consults a TrueForge **skill** for copywriting craft guidance. |
 | 5 | **Explainability** | `app/agents/explainability.py` | Receives the structured outputs of all four prior agents plus the `requires_approval` flag, and synthesizes a coherent plain-language narrative explaining the whole reasoning chain — this is what the Agent Trace tab foregrounds. |
 | 6 | **Prioritization / Ranking** | `app/agents/prioritization.py` | Runs independently, on demand, across every currently-classified lead. Uses genuine TrueForge subagent delegation (`create_sub_agent`, run in parallel, one per lead) for per-lead priority assessment, then consolidates in the root agent's own context for the final cross-lead order. |
 
@@ -339,7 +339,8 @@ against the model source files, not from memory).
 |---|---|
 | `personas` | Target-persona definitions (role, seniority, industry, company size band, geography, custom traits as JSON) the Persona Fit agent scores leads against. |
 | `solutions` | What you sell — problem solved, value props, differentiators, target channels — the Outreach Planner positions every message around this. |
-| `leads` | One row per unique lead, deduped by email. |
+| `campaigns` | Pairs one persona with one solution — the unit a lead is actually scored against, so multiple GTM motions run concurrently instead of sharing one global config. `is_default` marks the fallback campaign for leads with none assigned. |
+| `leads` | One row per unique lead, deduped by email. Carries a nullable `campaign_id`. |
 | `signals` | Raw and classified interaction events for a lead, from any source (`crm`/`website`/`email`/`linkedin`), keeping the original payload verbatim (`raw_payload` JSON) alongside a normalized `event_type`/`intent_stage_hint`. |
 | `agent_runs` | One row per agent invocation — `agent_name`, `input_summary`, `output` (JSON), `reasoning`, `status`, timestamps, and `trueforge_session_id` (nullable — null on the direct-fallback path). This is the append-only audit trail every "Agent Trace" view reads. |
 | `agent_run_followups` | Append-only Q&A pairs from the persistent-session follow-up feature. |
@@ -371,6 +372,12 @@ All routes are aggregated under `app/api/router.py` and mounted once by
 | `GET` | `/api/solutions/{id}` | Get one solution |
 | `PUT` | `/api/solutions/{id}` | Update a solution |
 | `DELETE` | `/api/solutions/{id}` | Delete a solution |
+| `GET` | `/api/campaigns` | List campaigns, with persona/solution/lead count joined in |
+| `POST` | `/api/campaigns` | Create a campaign |
+| `GET` | `/api/campaigns/{id}` | Get one campaign |
+| `PUT` | `/api/campaigns/{id}` | Update a campaign |
+| `DELETE` | `/api/campaigns/{id}` | Delete a campaign (rejected if it's the default, or has assigned leads) |
+| `POST` | `/api/campaigns/{id}/assign-leads` | Move a set of leads onto this campaign |
 | `POST` | `/api/uploads/crm-csv` | Ingest a CRM CSV export |
 | `POST` | `/api/uploads/website-events` | Ingest a website event log JSON |
 | `GET` | `/api/leads` | List all leads with their latest classification/plan status |
@@ -643,12 +650,12 @@ as documentation:
   remaining steps. Full automatic resumption would require checkpointing
   and replaying partial LangGraph state across an HTTP round trip, judged
   out of scope for this build's actual needs.
-- **`docs/DECISIONS.md`, `docs/R&D.md`, `IMPLEMENTATION_PLAN.md`, and
-  `challenge.md` are intentionally not part of the published repository**
-  (see `.gitignore`) — they're local working documents. If you're reading
-  this file from a fresh clone, those files won't be present; this
-  `DOCUMENTATION.md` folds in everything from them that's relevant to
-  understanding the shipped product.
+- **`docs/DECISIONS.md`, `IMPLEMENTATION_PLAN.md`, and `challenge.md` are
+  intentionally not part of the published repository** (see `.gitignore`) —
+  they're local working documents. If you're reading this file from a fresh
+  clone, those files won't be present; this `DOCUMENTATION.md` folds in
+  everything from them that's relevant to understanding the shipped
+  product. `docs/R&D.md` is tracked and does ship with the repo.
 - **Lead Pipeline is a card list, not a data table.** At the current
   scale (dozens of leads) this was judged the right tradeoff over a full
   TanStack Table rebuild (sorting/filtering/virtualization), even though
