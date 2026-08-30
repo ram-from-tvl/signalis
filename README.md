@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="image1.png" alt="Signalis Logo" width="500">
+</p>
+
 # Signalis
 
 **An agentic buying-signal copilot for GTM teams.** Signalis ingests CRM and
