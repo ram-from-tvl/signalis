@@ -28,7 +28,20 @@ early, mid, or late, a confidence score between 0 and 1 reflecting how much the 
 supports that stage (low confidence when signals conflict, are old, or are sparse), and a
 plain-language justification a sales rep could read in ten seconds and trust. A weak or
 contradictory signal history should produce a genuinely low confidence score, not an
-artificially inflated one."""
+artificially inflated one.
+
+Format the justification field itself as lightweight markdown text — literally include the
+"**" and "- " characters in the string you return, exactly like this example (match this shape,
+not this content):
+
+"**Late** stage, **85%** confidence.
+- Two demo requests and a pricing-page visit in the last 5 days
+- No conflicting early-stage activity
+- Signal score of **2.9** confirms strong, recent intent"
+
+Every justification you write must follow this exact pattern: a bolded stage/confidence lead-in
+line, then a blank line, then 2-4 "- " bullet points with any other key numbers bolded. Never
+return a single unbroken paragraph with no "**" or "- " markers in it."""
 
 
 def _days_ago(occurred_at: datetime.datetime | None) -> int:

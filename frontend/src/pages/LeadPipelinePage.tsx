@@ -251,7 +251,7 @@ export function LeadPipelinePage() {
                       {item.lead.title || "Title unknown"} at {item.lead.company}
                     </p>
                     {item.campaign_name && (
-                      <Badge variant="outline" className="mt-1 text-[10px]">
+                      <Badge variant="outline" className="mt-1 border-transparent bg-accent/15 text-accent text-[10px]">
                         {item.campaign_name}
                       </Badge>
                     )}

@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ClickSpark } from "@/components/ui/click-spark"
 import { CopyButton } from "@/components/ui/copy-button"
+import { MarkdownLite } from "@/components/ui/markdown-lite"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StageBadge } from "@/components/leads/StageBadge"
 import { ConfidenceMeter } from "@/components/leads/ConfidenceMeter"
@@ -18,7 +20,7 @@ import { ConfidenceTrendChart } from "@/components/leads/ConfidenceTrendChart"
 import { SignalHistoryTab } from "@/components/leads/SignalHistoryTab"
 import { ApprovePlanButton } from "@/components/leads/ApprovePlanButton"
 import { useToast } from "@/components/ui/toast-context"
-import { ArrowLeft, Sparkles, TrendingUp, CheckCircle2, XCircle, ShieldAlert, Search, Loader2 } from "lucide-react"
+import { ArrowLeft, Sparkles, TrendingUp, CheckCircle2, XCircle, ShieldAlert, Search, Loader2, Play, Send, History } from "lucide-react"
 import { parseUtcTimestamp } from "@/lib/utils"
 import { toolApprovalQuestion } from "@/lib/agents"
 
@@ -269,6 +271,7 @@ export function LeadDetailPage() {
 
   const { lead, signals, classification_history, latest_plan } = detail
   const latestClassification = classification_history[0]
+  const hasPriorRuns = classification_history.length > 0 || (trace?.length ?? 0) > 0
 
   return (
     <div className="flex flex-col gap-6 pb-16">
@@ -314,8 +317,14 @@ export function LeadDetailPage() {
             {simulatingSignal && simulateSignal.isPending ? "Simulating..." : "Simulate New Signal"}
           </Button>
           <Button variant="accent" onClick={() => runPipeline.mutate()} disabled={runPipeline.isPending}>
-            <Sparkles className="h-4 w-4" />
-            {runPipeline.isPending ? "Running agents..." : "Regenerate Plan"}
+            {runPipeline.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+            ) : hasPriorRuns ? (
+              <Sparkles className="h-4 w-4" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
+            {runPipeline.isPending ? "Running agents..." : hasPriorRuns ? "Regenerate Plan" : "Generate Plan"}
           </Button>
         </div>
       </div>
@@ -342,13 +351,13 @@ export function LeadDetailPage() {
             </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
-            <p className="text-sm leading-relaxed">{latestClassification.justification}</p>
+            <MarkdownLite text={latestClassification.justification} className="text-sm leading-relaxed" />
             {latestClassification.persona_fit_result?.reasoning && (
               <div className="rounded-lg bg-secondary/50 p-3 text-sm">
                 <p className="font-semibold mb-1">
                   Persona fit: <span className="capitalize">{latestClassification.persona_fit_result.fit}</span>
                 </p>
-                <p className="text-muted-foreground">{latestClassification.persona_fit_result.reasoning}</p>
+                <MarkdownLite text={latestClassification.persona_fit_result.reasoning} className="text-muted-foreground" />
                 {!!latestClassification.persona_fit_result.missing_data?.length && (
                   <p className="text-xs text-warning mt-1">
                     Missing data: {latestClassification.persona_fit_result.missing_data.join(", ")}
@@ -395,8 +404,9 @@ export function LeadDetailPage() {
         </Card>
       ) : (
         <Card>
-          <CardContent className="py-8 text-center text-sm text-muted-foreground">
-            No classification yet. Click "Regenerate Plan" to run the agent pipeline for this lead.
+          <CardContent className="py-8 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
+            <Sparkles className="h-5 w-5 text-muted-foreground/60" />
+            No classification yet. Click "Generate Plan" to run the agent pipeline for this lead.
           </CardContent>
         </Card>
       )}
@@ -465,12 +475,14 @@ export function LeadDetailPage() {
         ))}
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList>
-          <TabsTrigger value="plan" active={activeTab === "plan"}>Outreach Plan</TabsTrigger>
-          <TabsTrigger value="signals" active={activeTab === "signals"}>Signal History</TabsTrigger>
-          <TabsTrigger value="trace" active={activeTab === "trace"}>Agent Trace</TabsTrigger>
-          <TabsTrigger value="history" active={activeTab === "history"}>Classification History</TabsTrigger>
-        </TabsList>
+        <div className="sticky top-0 z-20 -mx-1 px-1 py-2 bg-background/80 backdrop-blur-sm">
+          <TabsList>
+            <TabsTrigger value="plan" active={activeTab === "plan"}>Outreach Plan</TabsTrigger>
+            <TabsTrigger value="signals" active={activeTab === "signals"}>Signal History</TabsTrigger>
+            <TabsTrigger value="trace" active={activeTab === "trace"}>Agent Trace</TabsTrigger>
+            <TabsTrigger value="history" active={activeTab === "history"}>Classification History</TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="plan">
           {latest_plan ? (
@@ -532,12 +544,24 @@ export function LeadDetailPage() {
                           <Badge variant="outline" className="capitalize">{tp.channel}</Badge>
                           <span className="text-sm font-semibold">{tp.content_theme}</span>
                         </div>
-                        <CopyButton
-                          value={tp.message_copy}
-                          label={tp.channel.toLowerCase() === "linkedin" ? "Copy LinkedIn message" : `Copy ${tp.channel}`}
-                        />
+                        {tp.channel.toLowerCase() === "email" &&
+                        latest_plan.email_verification_status === "unverified" ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>
+                                <CopyButton value={tp.message_copy} label="Copy email" />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>This email hasn't been verified — it may not be deliverable.</TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <CopyButton
+                            value={tp.message_copy}
+                            label={tp.channel.toLowerCase() === "linkedin" ? "Copy LinkedIn message" : `Copy ${tp.channel}`}
+                          />
+                        )}
                       </div>
-                      <p className="text-sm text-muted-foreground whitespace-pre-wrap">{tp.message_copy}</p>
+                      <p className="text-sm leading-relaxed text-foreground/90 whitespace-pre-wrap">{tp.message_copy}</p>
                     </li>
                   ))}
                 </ol>
@@ -558,7 +582,8 @@ export function LeadDetailPage() {
             </Card>
           ) : (
             <Card>
-              <CardContent className="py-8 text-center text-sm text-muted-foreground">
+              <CardContent className="py-8 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
+                <Send className="h-5 w-5 text-muted-foreground/60" />
                 No outreach plan generated yet.
               </CardContent>
             </Card>
@@ -582,7 +607,10 @@ export function LeadDetailPage() {
         <TabsContent value="history">
           <div className="flex flex-col gap-3">
             {classification_history.length === 0 && (
-              <p className="text-sm text-muted-foreground">No classification history yet.</p>
+              <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                <History className="h-4 w-4 text-muted-foreground/60" />
+                No classification history yet.
+              </p>
             )}
             <ConfidenceTrendChart history={classification_history} />
             {classification_history.map((c) => (
