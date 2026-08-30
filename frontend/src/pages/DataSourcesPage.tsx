@@ -144,9 +144,11 @@ function DropZone({
         onFile(file)
       }}
       className={cn(
-        "flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-6 text-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "flex flex-col items-center justify-center gap-2 rounded-lg border-dashed p-6 text-center transition-[border-color,border-width,background-color] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
-        isDragOver ? "border-accent bg-accent/5" : "border-border hover:border-accent/50 hover:bg-secondary/40"
+        isDragOver
+          ? "border-[3px] border-accent bg-accent/10"
+          : "border-2 border-border hover:border-accent/50 hover:bg-secondary/40"
       )}
     >
       <Icon className={cn("h-6 w-6", isDragOver ? "text-accent" : "text-muted-foreground")} />

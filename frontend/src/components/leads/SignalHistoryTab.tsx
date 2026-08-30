@@ -1,6 +1,6 @@
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { MousePointerClick, FileText, Mail, PhoneCall, TrendingUp } from "lucide-react"
+import { MousePointerClick, FileText, Mail, PhoneCall, TrendingUp, Radar } from "lucide-react"
 import { cn, parseUtcTimestamp } from "@/lib/utils"
 import type { Signal } from "@/types/api"
 
@@ -105,7 +105,8 @@ export function SignalHistoryTab({ signals }: { signals: Signal[] }) {
   if (signals.length === 0) {
     return (
       <Card>
-        <CardContent className="py-8 text-center text-sm text-muted-foreground">
+        <CardContent className="py-8 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
+          <Radar className="h-5 w-5 text-muted-foreground/60" />
           No signals recorded for this lead yet.
         </CardContent>
       </Card>

@@ -3,9 +3,10 @@ import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Button } from "@/components/ui/button"
+import { MarkdownLite } from "@/components/ui/markdown-lite"
 import { AgentRunFollowupPanel } from "@/components/leads/AgentRunFollowupPanel"
 import { AGENT_ORDER, AGENT_LABELS, AGENT_ACCENT_VARS, AGENT_ICONS, toolActivityLabel } from "@/lib/agents"
-import { Clock, Search } from "lucide-react"
+import { Clock, Search, FileClock } from "lucide-react"
 import { cn, parseUtcTimestamp } from "@/lib/utils"
 import type { AgentRun } from "@/types/api"
 
@@ -172,7 +173,8 @@ export function AgentTraceTab({
   if (!trace || trace.length === 0) {
     return (
       <Card>
-        <CardContent className="py-8 text-center text-sm text-muted-foreground">
+        <CardContent className="py-8 flex flex-col items-center gap-2 text-center text-sm text-muted-foreground">
+          <FileClock className="h-5 w-5 text-muted-foreground/60" />
           No agent runs yet for this lead.
         </CardContent>
       </Card>
@@ -230,7 +232,7 @@ export function AgentTraceTab({
                   </AccordionTrigger>
                   <AccordionContent className="px-2 pl-[3.25rem]">
                     <p className="text-xs text-muted-foreground mb-2">{run.input_summary}</p>
-                    <p className="text-sm leading-relaxed">{run.reasoning}</p>
+                    <MarkdownLite text={run.reasoning} className="text-sm leading-relaxed" />
                     <p className="mt-2 text-[11px] text-muted-foreground/70">{formatDate(run.started_at)}</p>
                     {toolChips.length > 0 && (
                       <div className="flex items-center gap-1.5 flex-wrap mt-2">

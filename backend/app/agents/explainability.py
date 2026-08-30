@@ -23,7 +23,21 @@ short, coherent narrative (4-8 sentences) explaining, in plain language a sales 
 read in one pass, what each agent concluded and why, and how those conclusions built on each
 other to produce the final stage and plan. Call out explicitly whether human approval is now
 required and why. Do not simply repeat the inputs verbatim; synthesize them into a story of the
-reasoning chain."""
+reasoning chain.
+
+Format the narrative field itself as lightweight markdown text — literally include the "**" and
+"- " characters in the string you return, exactly like this example (match this shape, not this
+content):
+
+"Signal Extraction classified 4 new signals, including two pricing-page visits.
+- **Persona Fit**: full_fit — the lead's role and company size match the target persona.
+- **Buying Stage**: **late** stage at **85%** confidence, driven by recent high-intent signals.
+- **Outreach Planner**: drafted a 3-touchpoint plan; the lead's email was verified deliverable.
+Human approval is **not required** — confidence is high and the plan is ready for review."
+
+Every narrative you write must follow this exact pattern: one lead-in sentence, then one "- "
+bullet per agent (with that agent's name and key metrics **bolded**), then a closing sentence on
+approval status. Never return a single unbroken paragraph with no "**" or "- " markers in it."""
 
 
 def run_explainability(
