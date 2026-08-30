@@ -1,17 +1,18 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { personasApi, solutionsApi } from "@/api/endpoints"
-import type { Persona, PersonaInput, SolutionInput } from "@/types/api"
+import { campaignsApi, personasApi, solutionsApi } from "@/api/endpoints"
+import type { CampaignDetail, Persona, PersonaInput, Solution, SolutionInput } from "@/types/api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
+import { Skeleton } from "@/components/ui/skeleton"
 import { KeyValueBuilder } from "@/components/ui/key-value-builder"
 import { useToast } from "@/components/ui/toast-context"
 import { cn, parseUtcTimestamp } from "@/lib/utils"
-import { Check } from "lucide-react"
+import { Check, Plus, Star, Users } from "lucide-react"
 
 const CHANNEL_OPTIONS = ["email", "linkedin", "phone", "events"]
 
@@ -36,65 +37,199 @@ function usePersonaForm(existing?: Persona) {
   return { form, setForm }
 }
 
-export function SetupPage() {
+// Campaigns list on the left, so a GTM team running several targeting
+// configs at once (e.g. "CTOs — Q3 platform push" and "VP Marketing —
+// enterprise upsell") can see and switch between them — instead of the
+// whole pipeline sharing one global "active" persona/solution.
+function CampaignSwitcher({
+  campaigns,
+  isLoading,
+  selectedId,
+  onSelect,
+  onNew,
+}: {
+  campaigns: CampaignDetail[] | undefined
+  isLoading: boolean
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onNew: () => void
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between gap-3">
+        <div>
+          <CardTitle>Campaigns</CardTitle>
+          <CardDescription>Each has its own persona and solution.</CardDescription>
+        </div>
+        <Button size="sm" variant="outline" onClick={onNew}>
+          <Plus className="h-3.5 w-3.5" /> New
+        </Button>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {isLoading && (
+          <div className="flex flex-col gap-2" aria-busy="true" aria-live="polite">
+            <Skeleton className="h-14 w-full" />
+            <Skeleton className="h-14 w-full" />
+          </div>
+        )}
+        {!isLoading && (campaigns?.length ?? 0) === 0 && (
+          <p className="text-sm text-muted-foreground">
+            No campaigns yet — create one to start scoring leads against a real persona.
+          </p>
+        )}
+        {campaigns?.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => onSelect(c.id)}
+            className={cn(
+              "flex items-start justify-between gap-2 rounded-lg border p-3 text-left transition-colors",
+              selectedId === c.id
+                ? "border-accent bg-accent/5"
+                : "border-border hover:border-accent/40 hover:bg-secondary/40"
+            )}
+          >
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-semibold truncate">{c.name}</p>
+                {c.is_default && (
+                  <Star className="h-3 w-3 shrink-0 fill-warning text-warning" aria-label="Default campaign" />
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground truncate mt-0.5">
+                {c.persona.role || "Unnamed persona"} · {c.solution.name || "Unnamed solution"}
+              </p>
+            </div>
+            <Badge variant="secondary" className="shrink-0 gap-1">
+              <Users className="h-3 w-3" /> {c.lead_count}
+            </Badge>
+          </button>
+        ))}
+      </CardContent>
+    </Card>
+  )
+}
+
+// The persona + solution forms for whichever campaign is selected. A
+// "new campaign" is a persona+solution+campaign created together in one
+// flow (three POSTs, only committed once all three succeed at the UI
+// level — no partial "persona created but no campaign wraps it" state
+// left behind on a normal save).
+function CampaignEditor({
+  campaign,
+  isNew,
+  onSaved,
+}: {
+  campaign: CampaignDetail | null
+  isNew: boolean
+  onSaved: (campaignId: string) => void
+}) {
   const queryClient = useQueryClient()
   const { push } = useToast()
 
-  const { data: personas } = useQuery({ queryKey: ["personas"], queryFn: personasApi.list })
-  const { data: solutions } = useQuery({ queryKey: ["solutions"], queryFn: solutionsApi.list })
-
-  const currentPersona = personas?.[0]
-  const currentSolution = solutions?.[0]
-
-  const { form: personaForm, setForm: setPersonaForm } = usePersonaForm(currentPersona)
+  const [campaignName, setCampaignName] = useState(campaign?.name ?? "")
+  const { form: personaForm, setForm: setPersonaForm } = usePersonaForm(campaign?.persona)
   const [customTraits, setCustomTraits] = useState<Record<string, unknown>>(
-    currentPersona?.custom_traits ?? {}
+    campaign?.persona.custom_traits ?? {}
   )
-
   const [solutionForm, setSolutionForm] = useState<SolutionInput>({
-    name: currentSolution?.name ?? "",
-    problem_solved: currentSolution?.problem_solved ?? "",
-    value_props: currentSolution?.value_props ?? [],
-    differentiators: currentSolution?.differentiators ?? [],
-    channels: currentSolution?.channels ?? ["email"],
+    name: campaign?.solution.name ?? "",
+    problem_solved: campaign?.solution.problem_solved ?? "",
+    value_props: campaign?.solution.value_props ?? [],
+    differentiators: campaign?.solution.differentiators ?? [],
+    channels: campaign?.solution.channels ?? ["email"],
   })
-  const [valuePropsText, setValuePropsText] = useState(
-    (currentSolution?.value_props ?? []).join("\n")
-  )
+  const [valuePropsText, setValuePropsText] = useState((campaign?.solution.value_props ?? []).join("\n"))
   const [differentiatorsText, setDifferentiatorsText] = useState(
-    (currentSolution?.differentiators ?? []).join("\n")
+    (campaign?.solution.differentiators ?? []).join("\n")
   )
 
-  const personaMutation = useMutation({
-    mutationFn: async () => {
-      const payload = { ...personaForm, custom_traits: customTraits }
-      return currentPersona
-        ? personasApi.update(currentPersona.id, payload)
-        : personasApi.create(payload)
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["personas"] })
-      push({ title: "Persona saved", variant: "success" })
-    },
-    onError: (err: Error) => push({ title: "Could not save persona", description: err.message, variant: "error" }),
-  })
+  // Re-seed local form state whenever the selected campaign changes (not
+  // on every keystroke — campaign?.id is the actual dependency).
+  useEffect(() => {
+    setCampaignName(campaign?.name ?? "")
+    setPersonaForm({
+      role: campaign?.persona.role ?? "",
+      seniority: campaign?.persona.seniority ?? "",
+      industry: campaign?.persona.industry ?? "",
+      company_size_band: campaign?.persona.company_size_band ?? "",
+      geography: campaign?.persona.geography ?? "",
+      custom_traits: campaign?.persona.custom_traits ?? {},
+    })
+    setCustomTraits(campaign?.persona.custom_traits ?? {})
+    setSolutionForm({
+      name: campaign?.solution.name ?? "",
+      problem_solved: campaign?.solution.problem_solved ?? "",
+      value_props: campaign?.solution.value_props ?? [],
+      differentiators: campaign?.solution.differentiators ?? [],
+      channels: campaign?.solution.channels ?? ["email"],
+    })
+    setValuePropsText((campaign?.solution.value_props ?? []).join("\n"))
+    setDifferentiatorsText((campaign?.solution.differentiators ?? []).join("\n"))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaign?.id])
 
-  const solutionMutation = useMutation({
+  const saveMutation = useMutation({
     mutationFn: async () => {
-      const payload: SolutionInput = {
+      const personaPayload = { ...personaForm, custom_traits: customTraits }
+      const solutionPayload: SolutionInput = {
         ...solutionForm,
         value_props: valuePropsText.split("\n").map((s) => s.trim()).filter(Boolean),
         differentiators: differentiatorsText.split("\n").map((s) => s.trim()).filter(Boolean),
       }
-      return currentSolution
-        ? solutionsApi.update(currentSolution.id, payload)
-        : solutionsApi.create(payload)
+
+      let persona: Persona
+      let solution: Solution
+      if (isNew || !campaign) {
+        persona = await personasApi.create(personaPayload)
+        solution = await solutionsApi.create(solutionPayload)
+        const created = await campaignsApi.create({
+          name: campaignName || "Untitled campaign",
+          persona_id: persona.id,
+          solution_id: solution.id,
+        })
+        return created.id
+      }
+
+      await personasApi.update(campaign.persona.id, personaPayload)
+      await solutionsApi.update(campaign.solution.id, solutionPayload)
+      if (campaignName !== campaign.name) {
+        await campaignsApi.update(campaign.id, {
+          name: campaignName,
+          persona_id: campaign.persona.id,
+          solution_id: campaign.solution.id,
+          is_default: campaign.is_default,
+        })
+      }
+      return campaign.id
+    },
+    onSuccess: (campaignId) => {
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] })
+      queryClient.invalidateQueries({ queryKey: ["personas"] })
+      queryClient.invalidateQueries({ queryKey: ["solutions"] })
+      push({ title: isNew ? "Campaign created" : "Campaign saved", variant: "success" })
+      onSaved(campaignId)
+    },
+    onError: (err: Error) =>
+      push({ title: "Could not save campaign", description: err.message, variant: "error" }),
+  })
+
+  const setDefaultMutation = useMutation({
+    mutationFn: () => {
+      if (!campaign) throw new Error("No campaign selected")
+      return campaignsApi.update(campaign.id, {
+        name: campaign.name,
+        persona_id: campaign.persona.id,
+        solution_id: campaign.solution.id,
+        is_default: true,
+      })
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["solutions"] })
-      push({ title: "Solution saved", variant: "success" })
+      queryClient.invalidateQueries({ queryKey: ["campaigns"] })
+      push({ title: "Set as default campaign", variant: "success" })
     },
-    onError: (err: Error) => push({ title: "Could not save solution", description: err.message, variant: "error" }),
+    onError: (err: Error) =>
+      push({ title: "Could not set default", description: err.message, variant: "error" }),
   })
 
   const toggleChannel = (channel: string) => {
@@ -107,14 +242,39 @@ export function SetupPage() {
   }
 
   return (
-    <div className="flex flex-col gap-6 pb-12">
-      <div>
-        <h1 className="font-heading text-2xl font-bold">Persona & Solution</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Defines who the Persona Fit Agent scores leads against and what the
-          Outreach Planner Agent positions in every message it drafts.
-        </p>
-      </div>
+    <div className="flex flex-col gap-6">
+      <Card>
+        <CardContent className="flex flex-wrap items-center gap-3 py-4">
+          <div className="flex-1 min-w-[12rem]">
+            <Label htmlFor="campaign-name" className="sr-only">
+              Campaign name
+            </Label>
+            <Input
+              id="campaign-name"
+              value={campaignName}
+              onChange={(e) => setCampaignName(e.target.value)}
+              placeholder="e.g. CTOs — Q3 platform push"
+              className="font-heading text-base font-semibold"
+            />
+          </div>
+          {campaign && !campaign.is_default && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setDefaultMutation.mutate()}
+              disabled={setDefaultMutation.isPending}
+            >
+              <Star className="h-3.5 w-3.5" />
+              {setDefaultMutation.isPending ? "Setting..." : "Set as default"}
+            </Button>
+          )}
+          {campaign?.is_default && (
+            <Badge variant="warning" className="gap-1">
+              <Star className="h-3 w-3 fill-current" /> Default — leads without a campaign use this one
+            </Badge>
+          )}
+        </CardContent>
+      </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
@@ -177,13 +337,6 @@ export function SetupPage() {
               </p>
               <KeyValueBuilder value={customTraits} onChange={setCustomTraits} />
             </div>
-            <Button
-              onClick={() => personaMutation.mutate()}
-              disabled={personaMutation.isPending}
-              className="self-start"
-            >
-              {personaMutation.isPending ? "Saving..." : "Save Persona"}
-            </Button>
           </CardContent>
         </Card>
 
@@ -254,50 +407,93 @@ export function SetupPage() {
                 })}
               </div>
             </div>
-            <Button
-              onClick={() => solutionMutation.mutate()}
-              disabled={solutionMutation.isPending}
-              className="self-start"
-            >
-              {solutionMutation.isPending ? "Saving..." : "Save Solution"}
-            </Button>
           </CardContent>
         </Card>
       </div>
 
-      {(currentPersona || currentSolution) && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Active Configuration</CardTitle>
-            <CardDescription>
-              Used by every agent run going forward. The most recently saved persona and
-              solution are treated as active.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-2">
-            <div className="flex flex-wrap gap-2">
-              {currentPersona && (
-                <Badge variant="secondary">Persona: {currentPersona.role || "Unnamed"}</Badge>
-              )}
-              {currentSolution && (
-                <Badge variant="secondary">Solution: {currentSolution.name || "Unnamed"}</Badge>
-              )}
-              {currentSolution?.channels.map((c) => (
-                <Badge key={c} variant="outline" className="capitalize">
-                  {c}
-                </Badge>
-              ))}
-            </div>
-            {(currentPersona || currentSolution) && (
-              <p className="text-xs text-muted-foreground">
-                {currentPersona && `Persona saved ${formatSavedAt(currentPersona.created_at)}`}
-                {currentPersona && currentSolution && " · "}
-                {currentSolution && `Solution saved ${formatSavedAt(currentSolution.created_at)}`}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      <div className="flex items-center gap-3">
+        <Button onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+          {saveMutation.isPending ? "Saving..." : isNew ? "Create Campaign" : "Save Campaign"}
+        </Button>
+        {campaign && !isNew && (
+          <p className="text-xs text-muted-foreground">
+            Persona saved {formatSavedAt(campaign.persona.created_at)} · Solution saved{" "}
+            {formatSavedAt(campaign.solution.created_at)}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function SetupPage() {
+  const { data: campaigns, isLoading } = useQuery({
+    queryKey: ["campaigns"],
+    queryFn: campaignsApi.list,
+  })
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [creatingNew, setCreatingNew] = useState(false)
+
+  // Default the selection to the default campaign (or the first one) once
+  // campaigns load, but only if nothing is selected yet — don't fight a
+  // user's own in-progress selection or "new campaign" draft.
+  useEffect(() => {
+    if (selectedId || creatingNew || !campaigns?.length) return
+    const defaultCampaign = campaigns.find((c) => c.is_default) ?? campaigns[0]
+    setSelectedId(defaultCampaign.id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaigns])
+
+  const selectedCampaign = campaigns?.find((c) => c.id === selectedId) ?? null
+
+  return (
+    <div className="flex flex-col gap-6 pb-12">
+      <div>
+        <h1 className="font-heading text-2xl font-bold">Campaigns</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          Each campaign pairs a target persona with a solution — leads are scored against the
+          campaign they're assigned to, not one shared configuration.
+        </p>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[18rem_1fr] items-start">
+        <CampaignSwitcher
+          campaigns={campaigns}
+          isLoading={isLoading}
+          selectedId={creatingNew ? null : selectedId}
+          onSelect={(id) => {
+            setCreatingNew(false)
+            setSelectedId(id)
+          }}
+          onNew={() => setCreatingNew(true)}
+        />
+
+        {creatingNew ? (
+          <CampaignEditor
+            campaign={null}
+            isNew
+            onSaved={(id) => {
+              setCreatingNew(false)
+              setSelectedId(id)
+            }}
+          />
+        ) : selectedCampaign ? (
+          <CampaignEditor
+            campaign={selectedCampaign}
+            isNew={false}
+            onSaved={(id) => setSelectedId(id)}
+          />
+        ) : !isLoading ? (
+          <Card>
+            <CardContent className="py-12 text-center text-sm text-muted-foreground">
+              Create your first campaign to define who the Persona Fit Agent scores leads
+              against and what the Outreach Planner Agent positions in every message.
+            </CardContent>
+          </Card>
+        ) : (
+          <Skeleton className="h-96 w-full" />
+        )}
+      </div>
     </div>
   )
 }

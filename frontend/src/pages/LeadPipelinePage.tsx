@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
-import { leadsApi, pipelineApi } from "@/api/endpoints"
+import { campaignsApi, leadsApi, pipelineApi } from "@/api/endpoints"
 import type { Stage } from "@/types/api"
 import { Card, CardContent } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -41,8 +41,10 @@ export function LeadPipelinePage() {
   const queryClient = useQueryClient()
   const { push } = useToast()
   const { data: leads, isLoading } = useQuery({ queryKey: ["leads"], queryFn: leadsApi.list })
+  const { data: campaigns } = useQuery({ queryKey: ["campaigns"], queryFn: campaignsApi.list })
 
   const [stageFilter, setStageFilter] = useState<Stage | "all">("all")
+  const [campaignFilter, setCampaignFilter] = useState<string>("all")
   const [sortKey, setSortKey] = useState<SortKey>("created_at")
   const [search, setSearch] = useState("")
 
@@ -72,6 +74,9 @@ export function LeadPipelinePage() {
     if (stageFilter !== "all") {
       items = items.filter((item) => item.latest_classification?.stage === stageFilter)
     }
+    if (campaignFilter !== "all") {
+      items = items.filter((item) => item.lead.campaign_id === campaignFilter)
+    }
     const query = search.trim().toLowerCase()
     if (query) {
       items = items.filter(
@@ -88,7 +93,7 @@ export function LeadPipelinePage() {
       return parseUtcTimestamp(b.lead.created_at).getTime() - parseUtcTimestamp(a.lead.created_at).getTime()
     })
     return items
-  }, [leads, stageFilter, sortKey, search])
+  }, [leads, stageFilter, campaignFilter, sortKey, search])
 
   return (
     <div className="flex flex-col gap-6 pb-12">
@@ -150,6 +155,21 @@ export function LeadPipelinePage() {
             <SelectItem value="late">Late</SelectItem>
           </SelectContent>
         </Select>
+        {(campaigns?.length ?? 0) > 1 && (
+          <Select value={campaignFilter} onValueChange={setCampaignFilter}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="Filter by campaign" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All campaigns</SelectItem>
+              {campaigns?.map((c) => (
+                <SelectItem key={c.id} value={c.id}>
+                  {c.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Select value={sortKey} onValueChange={(v) => setSortKey(v as SortKey)}>
           <SelectTrigger className="w-48">
             <ArrowUpDown className="h-3.5 w-3.5 mr-1 opacity-60" />
@@ -236,6 +256,11 @@ export function LeadPipelinePage() {
                     <p className="text-sm text-muted-foreground truncate">
                       {item.lead.title || "Title unknown"} at {item.lead.company}
                     </p>
+                    {item.campaign_name && (
+                      <Badge variant="outline" className="mt-1 text-[10px]">
+                        {item.campaign_name}
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-4 shrink-0">
                     {item.latest_classification ? (

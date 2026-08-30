@@ -16,7 +16,7 @@ from app.schemas import (
     PipelineRunResult,
     StageClassificationOut,
 )
-from app.services.pipeline import PipelinePausedForApproval, run_pipeline_for_lead
+from app.services.pipeline import NoCampaignConfigured, PipelinePausedForApproval, run_pipeline_for_lead
 
 router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 
@@ -39,6 +39,9 @@ def run_pipeline(payload: PipelineRunRequest, db: Session = Depends(get_db)):
         started = time.perf_counter()
         try:
             outcome = run_pipeline_for_lead(db, lead)
+        except NoCampaignConfigured as exc:
+            errors.append({"lead_id": lead.id, "error": str(exc)})
+            continue
         except PipelinePausedForApproval as exc:
             tool_names = ", ".join(sorted({r.tool_name for r in exc.requests}))
             errors.append(

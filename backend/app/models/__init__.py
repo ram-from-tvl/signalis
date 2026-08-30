@@ -1,4 +1,5 @@
 from app.models.agent_run import AgentRun
+from app.models.campaign import Campaign
 from app.models.classification import ApprovalEvent, OutreachPlan, StageClassification
 from app.models.followup import AgentRunFollowup
 from app.models.lead import Lead, Signal
@@ -10,6 +11,7 @@ from app.models.tool_approval import ToolApprovalRequest
 __all__ = [
     "Persona",
     "Solution",
+    "Campaign",
     "Lead",
     "Signal",
     "AgentRun",

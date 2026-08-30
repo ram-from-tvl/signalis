@@ -3,15 +3,17 @@
 `Base.metadata.create_all` handles brand-new tables but never alters an
 existing one, so a column added to an already-existing table needs an
 explicit ALTER TABLE. This module does that one kind of change (add a
-nullable column if missing) idempotently.
+nullable column if missing) idempotently, plus one one-time data backfill
+(see `backfill_default_campaign`).
 """
 from __future__ import annotations
 
 import logging
 
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger("signalis.db.migrations")
 
@@ -23,6 +25,7 @@ _ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("outreach_plans", "verified_email", "VARCHAR"),
     ("outreach_plans", "email_verification_status", "VARCHAR"),
     ("outreach_plans", "email_verification_reason", "VARCHAR"),
+    ("leads", "campaign_id", "VARCHAR"),
 ]
 
 
@@ -56,3 +59,57 @@ def run_startup_migrations(engine: Engine) -> None:
                 logger.info(
                     "Column %s.%s was added by a concurrent process; continuing.", table, column
                 )
+
+
+def backfill_default_campaign(session: Session) -> None:
+    """One-time data backfill for the Campaign model: any lead with a null
+    campaign_id (i.e. every lead that existed before campaigns did) gets
+    assigned to a default campaign, auto-created from whatever persona/
+    solution happened to be most-recently-saved under the old singleton
+    behavior. Idempotent: a no-op once every lead has a campaign_id, and
+    safe to call on every startup.
+
+    Deliberately data-driven rather than schema-driven (unlike
+    run_startup_migrations above), since it has to read existing rows to
+    decide what to do — it belongs in the same "runs once at startup,
+    always safe to re-run" family, just a different kind of migration.
+    """
+    from app.models import Campaign, Lead, Persona, Solution
+
+    leads_without_campaign = session.execute(
+        select(Lead).where(Lead.campaign_id.is_(None))
+    ).scalars().all()
+    if not leads_without_campaign:
+        return
+
+    default_campaign = session.execute(
+        select(Campaign).where(Campaign.is_default.is_(True))
+    ).scalars().first()
+
+    if default_campaign is None:
+        persona = session.execute(select(Persona).order_by(Persona.created_at.desc())).scalars().first()
+        solution = session.execute(select(Solution).order_by(Solution.created_at.desc())).scalars().first()
+        if persona is None or solution is None:
+            # Nothing to backfill from yet (fresh install, no persona/
+            # solution saved) — leave campaign_id null; the pipeline
+            # already handles a lead with no campaign by falling back to
+            # whatever default campaign exists at run time, or erroring
+            # clearly if none does yet.
+            return
+        logger.info(
+            "Creating default Campaign from pre-existing persona/solution for %d lead(s) without one",
+            len(leads_without_campaign),
+        )
+        default_campaign = Campaign(
+            name="Default",
+            persona_id=persona.id,
+            solution_id=solution.id,
+            is_default=True,
+        )
+        session.add(default_campaign)
+        session.flush()
+
+    for lead in leads_without_campaign:
+        lead.campaign_id = default_campaign.id
+        session.add(lead)
+    session.commit()

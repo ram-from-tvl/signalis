@@ -1,4 +1,5 @@
 from app.schemas.agent_run import AgentRunFollowupCreate, AgentRunFollowupOut, AgentRunOut
+from app.schemas.campaign import CampaignCreate, CampaignDetail, CampaignOut
 from app.schemas.classification import ApprovalActionRequest, OutreachPlanOut, StageClassificationOut
 from app.schemas.dashboard import DashboardStats
 from app.schemas.ingestion import IngestionReportOut
@@ -18,6 +19,9 @@ __all__ = [
     "PersonaOut",
     "SolutionCreate",
     "SolutionOut",
+    "CampaignCreate",
+    "CampaignOut",
+    "CampaignDetail",
     "SignalOut",
     "LeadOut",
     "LeadListItem",

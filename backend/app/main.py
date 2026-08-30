@@ -11,8 +11,8 @@ from sqlalchemy import inspect
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.db.base import Base
-from app.db.migrations import run_startup_migrations
-from app.db.session import engine
+from app.db.migrations import backfill_default_campaign, run_startup_migrations
+from app.db.session import SessionLocal, engine
 
 settings = get_settings()
 logger = logging.getLogger("signalis.startup")
@@ -31,6 +31,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         logger.info("Creating new database table(s) on startup: %s", ", ".join(sorted(new_tables)))
     Base.metadata.create_all(bind=engine)
     run_startup_migrations(engine)
+    with SessionLocal() as db:
+        backfill_default_campaign(db)
     yield
 
 

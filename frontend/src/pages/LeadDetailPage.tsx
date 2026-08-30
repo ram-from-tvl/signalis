@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useParams, Link } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { leadsApi, pipelineApi, approvalsApi, toolApprovalsApi } from "@/api/endpoints"
+import { leadsApi, pipelineApi, approvalsApi, toolApprovalsApi, campaignsApi } from "@/api/endpoints"
 import { ApiError } from "@/api/client"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -81,6 +81,8 @@ export function LeadDetailPage() {
     retry: (failureCount, err) => (err instanceof ApiError && err.status === 404 ? false : failureCount < 3),
   })
   const isNotFound = detailError instanceof ApiError && detailError.status === 404
+
+  const { data: campaigns } = useQuery({ queryKey: ["campaigns"], queryFn: campaignsApi.list })
 
   const {
     data: trace,
@@ -275,6 +277,14 @@ export function LeadDetailPage() {
           <p className="text-sm text-muted-foreground mt-1">
             {lead.title || "Title unknown"} at {lead.company} &middot; {lead.industry || "industry unknown"} &middot; {lead.company_size || "size unknown"}
           </p>
+          {(() => {
+            const campaign = campaigns?.find((c) => c.id === lead.campaign_id)
+            return campaign ? (
+              <Badge variant="secondary" className="mt-2">
+                Campaign: {campaign.name}
+              </Badge>
+            ) : null
+          })()}
         </div>
         <div className="flex gap-2 shrink-0">
           <Button

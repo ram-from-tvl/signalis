@@ -65,7 +65,13 @@ def _find_lead_by_identifier(db: Session, *, email: str | None, name: str | None
     return None
 
 
-def ingest_crm_csv(db: Session, file_content: bytes) -> IngestionReport:
+def ingest_crm_csv(db: Session, file_content: bytes, campaign_id: str | None = None) -> IngestionReport:
+    """`campaign_id` assigns every newly-created lead from this upload to a
+    specific campaign — the point where "who is this batch of leads for"
+    gets decided, rather than every lead implicitly sharing one global
+    persona/solution. A lead that already existed keeps its current
+    campaign_id unchanged (re-uploading the same CRM export shouldn't
+    silently move a lead to a different campaign)."""
     report = IngestionReport()
     text = file_content.decode("utf-8-sig", errors="replace")
     reader = csv.DictReader(io.StringIO(text))
@@ -105,6 +111,7 @@ def ingest_crm_csv(db: Session, file_content: bytes) -> IngestionReport:
                 industry=(row.get("industry") or "").strip(),
                 geography=(row.get("geography") or "").strip(),
                 email=email,
+                campaign_id=campaign_id,
             )
             db.add(lead)
             db.flush()

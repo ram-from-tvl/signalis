@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
-from app.models import Lead, OutreachPlan, Signal, StageClassification
+from app.models import Campaign, Lead, OutreachPlan, Signal, StageClassification
 from app.schemas import (
     AgentRunOut,
     AppendSignalsRequest,
@@ -24,6 +24,7 @@ router = APIRouter(prefix="/api/leads", tags=["leads"])
 @router.get("", response_model=list[LeadListItem])
 def list_leads(db: Session = Depends(get_db)):
     leads = db.execute(select(Lead).order_by(Lead.created_at.desc())).scalars().all()
+    campaign_names = dict(db.execute(select(Campaign.id, Campaign.name)).all())
     items = []
     for lead in leads:
         latest = db.execute(
@@ -39,6 +40,7 @@ def list_leads(db: Session = Depends(get_db)):
         items.append(
             LeadListItem(
                 lead=LeadOut.model_validate(lead),
+                campaign_name=campaign_names.get(lead.campaign_id),
                 latest_classification=latest,
                 latest_plan_status=latest_plan.status if latest_plan else None,
             )
