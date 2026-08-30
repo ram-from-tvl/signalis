@@ -9,6 +9,16 @@ website activity, classifies each lead's buying stage with explainable,
 LLM-generated reasoning, and drafts an outreach plan a rep can approve and
 send — re-running automatically whenever new signals arrive.
 
+## Demo
+
+<p align="center">
+  <a href="demo/signalis_demo_narrated.mp4">
+    <img src="demo/demo_thumbnail.png" alt="Watch the Signalis demo — live multi-campaign pipeline run, narrated" width="720">
+  </a>
+</p>
+
+<p align="center"><em>▶ Click to watch — a real, live pipeline run: multi-campaign targeting, agent-by-agent progress, explainable classification, and a copy-ready outreach plan, narrated end to end.</em></p>
+
 ## What it does
 
 - Turns raw CRM rows and website events into normalized, stage-tagged signals
