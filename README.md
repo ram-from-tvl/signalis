@@ -12,12 +12,23 @@ send — re-running automatically whenever new signals arrive.
 ## Demo
 
 <p align="center">
+  <a href="https://youtu.be/1j-6whLuSW4">
+    <img src="https://img.youtube.com/vi/1j-6whLuSW4/maxresdefault.jpg" alt="Watch the Signalis demo on YouTube — live multi-campaign pipeline run, narrated" width="720">
+  </a>
+</p>
+
+<p align="center"><em>▶ <a href="https://youtu.be/1j-6whLuSW4">Watch on YouTube</a> — a real, live pipeline run: multi-campaign targeting, agent-by-agent progress, explainable classification, and a copy-ready outreach plan, narrated end to end.</em></p>
+
+<details>
+<summary>Prefer the video file directly in the repo?</summary>
+
+<p align="center">
   <a href="demo/signalis_demo_narrated.mp4">
     <img src="demo/demo_thumbnail.png" alt="Watch the Signalis demo — live multi-campaign pipeline run, narrated" width="720">
   </a>
 </p>
 
-<p align="center"><em>▶ Click to watch — a real, live pipeline run: multi-campaign targeting, agent-by-agent progress, explainable classification, and a copy-ready outreach plan, narrated end to end.</em></p>
+</details>
 
 ## What it does
 
